@@ -1,0 +1,30 @@
+{
+  "name": "minimalist-dev-tracker",
+  "displayName": "Minimalist Dev Tracker",
+  "description": "Privacy-first local coding activity tracker",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "main": "./src/extension.js",
+  "activationEvents": ["*"],
+  "contributes": {
+    "configuration": {
+      "title": "Minimalist Dev Tracker",
+      "properties": {
+        "minimalTracker.trackedPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Absolute root repository paths to track"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node test/run-tests.js",
+    "compile": "echo compile-skipped"
+  }
+}
+
+
