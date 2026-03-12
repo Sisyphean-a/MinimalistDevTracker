@@ -10,6 +10,18 @@ function createRepoState(startAt, baselineDiff) {
   };
 }
 
+function createSession(sessionInput) {
+  const durationPenalty = sessionInput.subtractDebounce ? sessionInput.debounceMs : 0;
+  return Object.freeze({
+    repoPath: sessionInput.repoPath,
+    startTime: sessionInput.state.sessionStartMs,
+    endTime: sessionInput.endTime,
+    durationMs: Math.max(0, sessionInput.endTime - sessionInput.state.sessionStartMs - durationPenalty),
+    locAdded: sessionInput.endDiff.insertions - sessionInput.state.baselineDiff.insertions,
+    locDeleted: sessionInput.endDiff.deletions - sessionInput.state.baselineDiff.deletions
+  });
+}
+
 function createTimeTracker(options) {
   const debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const now = options.now;
@@ -26,6 +38,7 @@ function createTimeTracker(options) {
     if (!state) {
       return;
     }
+
     clearTimeout(state.timeoutHandle);
     state.timeoutHandle = setTimeout(() => {
       void finalizeSession(repoPath, true);
@@ -37,21 +50,10 @@ function createTimeTracker(options) {
     if (existing) {
       return existing;
     }
+
     const created = createRepoState(now(), await readDiff(repoPath));
     states.set(repoPath, created);
     return created;
-  }
-
-  function createSession(repoPath, state, endTime, endDiff, subtractDebounce) {
-    const durationPenalty = subtractDebounce ? debounceMs : 0;
-    return Object.freeze({
-      repoPath,
-      startTime: state.sessionStartMs,
-      endTime,
-      durationMs: Math.max(0, endTime - state.sessionStartMs - durationPenalty),
-      locAdded: endDiff.insertions - state.baselineDiff.insertions,
-      locDeleted: endDiff.deletions - state.baselineDiff.deletions
-    });
   }
 
   async function finalizeSession(repoPath, subtractDebounce) {
@@ -59,10 +61,19 @@ function createTimeTracker(options) {
     if (!state || state.status !== 'ACTIVE') {
       return null;
     }
+
     clearTimeout(state.timeoutHandle);
     const endTime = now();
     const endDiff = await readDiff(repoPath);
-    const session = createSession(repoPath, state, endTime, endDiff, subtractDebounce);
+    const session = createSession({
+      repoPath,
+      state,
+      endTime,
+      endDiff,
+      debounceMs,
+      subtractDebounce
+    });
+
     states.delete(repoPath);
     await Promise.resolve(onSessionFinalized(session));
     return session;
@@ -78,6 +89,7 @@ function createTimeTracker(options) {
     if (!finalized) {
       return null;
     }
+
     const restarted = createRepoState(now(), await readDiff(repoPath));
     states.set(repoPath, restarted);
     scheduleTimeout(repoPath);

@@ -18,10 +18,14 @@ async function ensureDirectory(dirPath) {
   await fs.mkdir(dirPath, { recursive: true });
 }
 
+async function readJson(filePath) {
+  const raw = await fs.readFile(filePath, 'utf8');
+  return JSON.parse(raw);
+}
+
 async function readDailyFile(filePath, dateKey) {
   try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    return JSON.parse(raw);
+    return await readJson(filePath);
   } catch (error) {
     if (error.code === 'ENOENT') {
       return { date: dateKey, projects: {} };
@@ -31,7 +35,8 @@ async function readDailyFile(filePath, dateKey) {
 }
 
 function applySession(dailyData, session) {
-  const existing = dailyData.projects[session.repoPath] ?? emptyProjectRecord();
+  const currentProjects = dailyData.projects ?? {};
+  const existing = currentProjects[session.repoPath] ?? emptyProjectRecord();
   const nextProject = {
     totalActiveTimeMs: existing.totalActiveTimeMs + session.durationMs,
     totalLocAdded: existing.totalLocAdded + session.locAdded,
@@ -45,8 +50,19 @@ function applySession(dailyData, session) {
     })
   };
 
-  dailyData.projects[session.repoPath] = nextProject;
-  return dailyData;
+  return {
+    date: dailyData.date,
+    projects: {
+      ...currentProjects,
+      [session.repoPath]: nextProject
+    }
+  };
+}
+
+function sortDailyFiles(fileNames) {
+  return fileNames
+    .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+    .sort((left, right) => right.localeCompare(left));
 }
 
 function createStorage(globalStoragePath) {
@@ -59,13 +75,31 @@ function createStorage(globalStoragePath) {
     await fs.writeFile(filePath, JSON.stringify(updated, null, 2), 'utf8');
   }
 
+  async function readLatestDaily() {
+    try {
+      const files = await fs.readdir(globalStoragePath);
+      const sorted = sortDailyFiles(files);
+      if (sorted.length === 0) {
+        return null;
+      }
+      return readJson(path.join(globalStoragePath, sorted[0]));
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   return Object.freeze({
-    appendSession
+    appendSession,
+    readLatestDaily
   });
 }
 
 module.exports = {
   createStorage,
   toDateKey,
-  applySession
+  applySession,
+  sortDailyFiles
 };

@@ -4,17 +4,32 @@
   "description": "Privacy-first local coding activity tracker",
   "version": "0.0.1",
   "publisher": "local",
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
   "main": "./src/extension.js",
-  "activationEvents": ["*"],
+  "activationEvents": [
+    "*",
+    "onCommand:minimalTracker.openDailyReport"
+  ],
   "contributes": {
+    "commands": [
+      {
+        "command": "minimalTracker.openDailyReport",
+        "title": "Minimal Tracker: Open Daily Report"
+      }
+    ],
     "configuration": {
       "title": "Minimalist Dev Tracker",
       "properties": {
         "minimalTracker.trackedPaths": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Absolute root repository paths to track"
         }
@@ -26,5 +41,3 @@
     "compile": "echo compile-skipped"
   }
 }
-
-

@@ -5,16 +5,28 @@ function normalizePath(inputPath) {
   return normalized.endsWith('/') ? normalized : `${normalized}/`;
 }
 
+function trimTrailingSlash(normalizedPath) {
+  return normalizedPath.endsWith('/') ? normalizedPath.slice(0, -1) : normalizedPath;
+}
+
 function createPathRegistry(allowedRoots) {
-  const normalizedRoots = allowedRoots.map((rootPath) => normalizePath(rootPath));
+  const normalizedRoots = allowedRoots
+    .map((rootPath) => normalizePath(rootPath))
+    .sort((left, right) => right.length - left.length);
+
+  function resolveRepoPath(targetPath) {
+    const normalizedTarget = normalizePath(targetPath);
+    const match = normalizedRoots.find((rootPath) => normalizedTarget.startsWith(rootPath));
+    return match ? trimTrailingSlash(match) : null;
+  }
 
   function isAllowed(targetPath) {
-    const normalizedTarget = normalizePath(targetPath);
-    return normalizedRoots.some((rootPath) => normalizedTarget.startsWith(rootPath));
+    return resolveRepoPath(targetPath) !== null;
   }
 
   return Object.freeze({
-    isAllowed
+    isAllowed,
+    resolveRepoPath
   });
 }
 
