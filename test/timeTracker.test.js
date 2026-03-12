@@ -106,3 +106,26 @@ test('commit event finalizes current chunk and keeps tracking active', async () 
   assert.equal(sessionLogs[1].locAdded, 2);
   assert.equal(sessionLogs[1].locDeleted, 1);
 });
+
+test('never outputs negative loc when working-tree diff shrinks during a session', async () => {
+  const clock = createClock(1_000);
+  const sessionLogs = [];
+  const snapshots = [
+    { insertions: 227, deletions: 2 },
+    { insertions: 0, deletions: 0 }
+  ];
+  const tracker = createTimeTracker({
+    debounceMs: 120_000,
+    now: clock.now,
+    getDiff: () => snapshots.shift(),
+    onSessionFinalized: (session) => sessionLogs.push(session)
+  });
+
+  await tracker.recordActivity('F:/repo-a');
+  clock.advance(10_000);
+  await tracker.flushAll();
+
+  assert.equal(sessionLogs.length, 1);
+  assert.equal(sessionLogs[0].locAdded, 0);
+  assert.equal(sessionLogs[0].locDeleted, 0);
+});

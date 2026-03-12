@@ -4,6 +4,11 @@
   "description": "Privacy-first local coding activity tracker",
   "version": "0.0.1",
   "publisher": "local",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sisyphean-a/MinimalistDevTracker.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -12,8 +17,7 @@
   ],
   "main": "./src/extension.js",
   "activationEvents": [
-    "*",
-    "onCommand:minimalTracker.openDailyReport"
+    "onStartupFinished"
   ],
   "contributes": {
     "commands": [

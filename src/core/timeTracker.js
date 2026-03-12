@@ -1,6 +1,10 @@
 const DEFAULT_DEBOUNCE_MS = 120_000;
 const DIFF_ZERO = Object.freeze({ insertions: 0, deletions: 0 });
 
+function toNonNegativeDelta(endValue, startValue) {
+  return Math.max(0, endValue - startValue);
+}
+
 function createRepoState(startAt, baselineDiff) {
   return {
     status: 'ACTIVE',
@@ -17,8 +21,8 @@ function createSession(sessionInput) {
     startTime: sessionInput.state.sessionStartMs,
     endTime: sessionInput.endTime,
     durationMs: Math.max(0, sessionInput.endTime - sessionInput.state.sessionStartMs - durationPenalty),
-    locAdded: sessionInput.endDiff.insertions - sessionInput.state.baselineDiff.insertions,
-    locDeleted: sessionInput.endDiff.deletions - sessionInput.state.baselineDiff.deletions
+    locAdded: toNonNegativeDelta(sessionInput.endDiff.insertions, sessionInput.state.baselineDiff.insertions),
+    locDeleted: toNonNegativeDelta(sessionInput.endDiff.deletions, sessionInput.state.baselineDiff.deletions)
   });
 }
 

@@ -1,0 +1,8 @@
+.git/**
+.github/**
+.vscode/**
+docs/**
+test/**
+**/*.vsix
+**/*.log
+改造设计重构文档.md
