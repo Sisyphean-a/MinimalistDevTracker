@@ -1,21 +1,21 @@
-const path = require('node:path');
+const { createPathNormalizer } = require('./pathKey');
 
-function normalizePath(inputPath) {
-  const normalized = path.resolve(inputPath).replace(/\\/g, '/').toLowerCase();
-  return normalized.endsWith('/') ? normalized : `${normalized}/`;
+function normalizePath(inputPath, normalizer = createPathNormalizer()) {
+  return normalizer.normalizeWithTrailingSlash(inputPath);
 }
 
 function trimTrailingSlash(normalizedPath) {
   return normalizedPath.endsWith('/') ? normalizedPath.slice(0, -1) : normalizedPath;
 }
 
-function createPathRegistry(allowedRoots) {
+function createPathRegistry(allowedRoots, options = {}) {
+  const normalizer = options.normalizer ?? createPathNormalizer(options);
   const normalizedRoots = allowedRoots
-    .map((rootPath) => normalizePath(rootPath))
+    .map((rootPath) => normalizePath(rootPath, normalizer))
     .sort((left, right) => right.length - left.length);
 
   function resolveRepoPath(targetPath) {
-    const normalizedTarget = normalizePath(targetPath);
+    const normalizedTarget = normalizePath(targetPath, normalizer);
     const match = normalizedRoots.find((rootPath) => normalizedTarget.startsWith(rootPath));
     return match ? trimTrailingSlash(match) : null;
   }

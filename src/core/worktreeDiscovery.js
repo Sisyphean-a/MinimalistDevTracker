@@ -1,9 +1,9 @@
-const path = require('node:path');
+const { createPathNormalizer } = require('./pathKey');
 
 const WORKTREE_PREFIX = 'worktree ';
 
-function normalizeRepoPath(inputPath) {
-  return path.resolve(inputPath).replace(/\\/g, '/').toLowerCase();
+function normalizeRepoPath(inputPath, normalizer = createPathNormalizer()) {
+  return normalizer.normalize(inputPath);
 }
 
 function parseWorktreeListPorcelain(output) {
@@ -20,6 +20,7 @@ function parseWorktreeListPorcelain(output) {
 
 function createWorktreeDiscovery(options) {
   const execGit = options.execGit;
+  const normalizer = options.normalizer ?? createPathNormalizer(options);
 
   async function resolveRepositoryRoot(trackedPath) {
     const rootOutput = await execGit(['-C', trackedPath, 'rev-parse', '--show-toplevel']);
@@ -28,8 +29,8 @@ function createWorktreeDiscovery(options) {
 
   async function resolveWorktrees(repoRoot) {
     const output = await execGit(['-C', repoRoot, 'worktree', 'list', '--porcelain']);
-    const worktrees = parseWorktreeListPorcelain(output).map((item) => normalizeRepoPath(item));
-    const normalizedRoot = normalizeRepoPath(repoRoot);
+    const worktrees = parseWorktreeListPorcelain(output).map((item) => normalizeRepoPath(item, normalizer));
+    const normalizedRoot = normalizeRepoPath(repoRoot, normalizer);
     return Array.from(new Set(worktrees.concat(normalizedRoot)));
   }
 

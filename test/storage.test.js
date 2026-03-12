@@ -34,3 +34,31 @@ test('appendSession aggregates data and readLatestDaily returns newest file', as
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('appendSession keeps all sessions when writing concurrently to same day file', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-concurrency-'));
+  const storage = createStorage(dir);
+  const sessionCount = 12;
+
+  await Promise.all(
+    Array.from({ length: sessionCount }).map((_, index) => {
+      return storage.appendSession({
+        repoPath: 'f:/repo/main',
+        startTime: Date.parse('2026-03-14T01:00:00.000Z') + index,
+        endTime: Date.parse('2026-03-14T02:00:00.000Z') + index,
+        durationMs: 1_000,
+        locAdded: 2,
+        locDeleted: 1
+      });
+    })
+  );
+
+  const latest = await storage.readLatestDaily();
+  const project = latest.projects['f:/repo/main'];
+  assert.equal(project.sessions.length, sessionCount);
+  assert.equal(project.totalActiveTimeMs, sessionCount * 1_000);
+  assert.equal(project.totalLocAdded, sessionCount * 2);
+  assert.equal(project.totalLocDeleted, sessionCount * 1);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});

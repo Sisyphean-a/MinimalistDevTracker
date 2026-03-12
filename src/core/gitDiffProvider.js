@@ -1,5 +1,5 @@
-const { execFile } = require('node:child_process');
-const path = require('node:path');
+const { createGitClient } = require('./gitClient');
+const { createPathNormalizer } = require('./pathKey');
 
 const DIFF_ZERO = Object.freeze({ insertions: 0, deletions: 0 });
 const SHORTSTAT_PATTERN = /(\d+)\s+insertions?\(\+\).*(\d+)\s+deletions?\(-\)|((\d+)\s+insertions?\(\+\))|((\d+)\s+deletions?\(-\))/;
@@ -18,19 +18,9 @@ function parseShortStat(stdout) {
   return { insertions, deletions };
 }
 
-function runGitShortStat(repoPath) {
-  return new Promise((resolve, reject) => {
-    execFile('git', ['-C', repoPath, 'diff', 'HEAD', '--shortstat'], (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(parseShortStat(stdout));
-    });
-  });
-}
-
-function createGitDiffProvider(vscode) {
+function createGitDiffProvider(vscode, options = {}) {
+  const gitClient = options.gitClient ?? createGitClient(options);
+  const normalizer = options.normalizer ?? createPathNormalizer(options);
   const repoMap = new Map();
 
   function bindRepository(repo) {
@@ -38,20 +28,19 @@ function createGitDiffProvider(vscode) {
     if (!rootPath) {
       return;
     }
-    repoMap.set(path.resolve(rootPath).toLowerCase(), repo);
+    repoMap.set(normalizer.normalize(rootPath), repo);
   }
 
   function getRepoFromPath(repoPath) {
-    const normalized = path.resolve(repoPath).toLowerCase();
+    const normalized = normalizer.normalize(repoPath);
     return repoMap.get(normalized) ?? null;
   }
 
   async function getDiff(repoPath) {
     const repo = getRepoFromPath(repoPath);
-    if (repo) {
-      return runGitShortStat(repo.rootUri.fsPath);
-    }
-    return runGitShortStat(repoPath);
+    const targetRepoPath = repo ? repo.rootUri.fsPath : repoPath;
+    const stdout = await gitClient.run(['-C', targetRepoPath, 'diff', 'HEAD', '--shortstat']);
+    return parseShortStat(stdout);
   }
 
   return Object.freeze({

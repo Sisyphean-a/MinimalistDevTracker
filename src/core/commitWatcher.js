@@ -1,11 +1,12 @@
-const path = require('node:path');
+const { createPathNormalizer } = require('./pathKey');
 
-function normalizeRepoPath(repoPath) {
-  return path.resolve(repoPath).replace(/\\/g, '/').toLowerCase();
+function normalizeRepoPath(repoPath, normalizer = createPathNormalizer()) {
+  return normalizer.normalize(repoPath);
 }
 
 function createCommitWatcher(options) {
   const onCommit = options.onCommit;
+  const normalizer = options.normalizer ?? createPathNormalizer(options);
   const headByRepo = new Map();
 
   function readHead(repo) {
@@ -18,7 +19,7 @@ function createCommitWatcher(options) {
       return { dispose: () => {} };
     }
 
-    const repoPath = normalizeRepoPath(rawRepoPath);
+    const repoPath = normalizeRepoPath(rawRepoPath, normalizer);
     headByRepo.set(repoPath, readHead(repo));
     return repo.state.onDidChange(() => {
       const previous = headByRepo.get(repoPath);

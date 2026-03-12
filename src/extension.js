@@ -1,4 +1,3 @@
-const { execFile } = require('node:child_process');
 const vscode = require('vscode');
 
 const { createPathRegistry } = require('./core/pathRegistry');
@@ -7,9 +6,11 @@ const { createGitDiffProvider } = require('./core/gitDiffProvider');
 const { createStorage } = require('./core/storage');
 const { createWorktreeDiscovery } = require('./core/worktreeDiscovery');
 const { createCommitWatcher } = require('./core/commitWatcher');
+const { createRuntimeTracker } = require('./core/runtimeTracker');
+const { createGitClient } = require('./core/gitClient');
+const { createPathNormalizer } = require('./core/pathKey');
 const { renderDailyReportHtml } = require('./ui/dailyReportView');
 
-const GIT_TIMEOUT_MS = 3_000;
 const REPORT_VIEW_TYPE = 'minimalTracker.dailyReport';
 const REPORT_COMMAND_ID = 'minimalTracker.openDailyReport';
 let runtime = null;
@@ -18,18 +19,6 @@ function getTrackedPaths() {
   const config = vscode.workspace.getConfiguration('minimalTracker');
   const list = config.get('trackedPaths', []);
   return list.filter((value) => typeof value === 'string' && value.trim());
-}
-
-function execGit(args) {
-  return new Promise((resolve, reject) => {
-    execFile('git', args, { timeout: GIT_TIMEOUT_MS }, (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(stdout);
-    });
-  });
 }
 
 function createTracker(storage, gitDiffProvider) {
@@ -46,64 +35,45 @@ function createTracker(storage, gitDiffProvider) {
   });
 }
 
-function isDocumentTracked(pathRegistry, document) {
-  const isFile = document?.uri?.scheme === 'file';
-  return Boolean(isFile && pathRegistry.isAllowed(document.uri.fsPath));
-}
-
-function registerEditorListeners(context, pathRegistry, tracker) {
-  function onEditorSignal(document) {
-    if (!isDocumentTracked(pathRegistry, document)) {
-      return;
-    }
-
-    const repoPath = pathRegistry.resolveRepoPath(document.uri.fsPath);
-    if (!repoPath) {
-      return;
-    }
-
-    void tracker.recordActivity(repoPath);
-  }
-
+function registerEditorListeners(context, runtimeTracker) {
   context.subscriptions.push(
-    vscode.workspace.onDidChangeTextDocument((event) => onEditorSignal(event.document)),
-    vscode.window.onDidChangeActiveTextEditor((editor) => editor && onEditorSignal(editor.document)),
-    vscode.window.onDidChangeTextEditorSelection((event) => onEditorSignal(event.textEditor.document))
+    vscode.workspace.onDidChangeTextDocument((event) => runtimeTracker.recordEditorActivity(event.document)),
+    vscode.window.onDidChangeActiveTextEditor((editor) => editor && runtimeTracker.recordEditorActivity(editor.document)),
+    vscode.window.onDidChangeTextEditorSelection((event) => runtimeTracker.recordEditorActivity(event.textEditor.document))
   );
 }
 
-function registerRepository(input) {
-  input.gitDiffProvider.bindRepository(input.repo);
-  const disposable = input.commitWatcher.trackRepository(input.repo);
-  context.subscriptions.push(disposable);
-}
-
-async function wireGitIntegration(context, gitDiffProvider, tracker) {
+async function wireGitIntegration(context, runtimeTracker) {
   const gitExtension = vscode.extensions.getExtension('vscode.git');
   if (!gitExtension) {
     return;
   }
 
   const git = gitExtension.isActive ? gitExtension.exports.getAPI(1) : (await gitExtension.activate()).getAPI(1);
-  const commitWatcher = createCommitWatcher({
-    onCommit: (repoPath) => {
-      void tracker.handleCommit(repoPath);
-    }
-  });
-
-  git.repositories.forEach((repo) => registerRepository({ repo, gitDiffProvider, commitWatcher, context }));
+  git.repositories.forEach((repo) => runtimeTracker.registerRepository({
+    repo,
+    subscriptions: context.subscriptions
+  }));
   context.subscriptions.push(git.onDidOpenRepository((repo) => {
-    registerRepository({ repo, gitDiffProvider, commitWatcher, context });
+    runtimeTracker.registerRepository({
+      repo,
+      subscriptions: context.subscriptions
+    });
   }));
 }
 
-async function buildPathRegistry(trackedPaths) {
-  const discovery = createWorktreeDiscovery({ execGit });
+async function buildPathRegistry(trackedPaths, input) {
+  const discovery = createWorktreeDiscovery({
+    execGit: (args) => input.gitClient.run(args),
+    normalizer: input.normalizer
+  });
   const result = await discovery.resolveAllowedPaths(trackedPaths);
   result.errors.forEach((error) => {
     console.error('[minimal-tracker] tracked path resolve error', error);
   });
-  return createPathRegistry(result.allowedPaths);
+  return createPathRegistry(result.allowedPaths, {
+    normalizer: input.normalizer
+  });
 }
 
 async function showDailyReport(storage) {
@@ -125,15 +95,36 @@ function registerCommands(context, storage) {
 }
 
 async function activate(context) {
+  const normalizer = createPathNormalizer();
+  const gitClient = createGitClient();
   const trackedPaths = getTrackedPaths();
-  const pathRegistry = await buildPathRegistry(trackedPaths);
+  const pathRegistry = await buildPathRegistry(trackedPaths, { gitClient, normalizer });
   const storage = createStorage(context.globalStorageUri.fsPath);
-  const gitDiffProvider = createGitDiffProvider(vscode);
+  const gitDiffProvider = createGitDiffProvider(vscode, { gitClient, normalizer });
   const tracker = createTracker(storage, gitDiffProvider);
+  let runtimeTrackerRef = null;
+  const commitWatcher = createCommitWatcher({
+    normalizer,
+    onCommit: (repoPath) => {
+      if (!runtimeTrackerRef) {
+        throw new Error('runtime tracker not initialized before commit callback');
+      }
+      runtimeTrackerRef.handleCommit(repoPath);
+    }
+  });
+  runtimeTrackerRef = createRuntimeTracker({
+    pathRegistry,
+    activityTracker: tracker,
+    gitDiffProvider,
+    commitWatcher,
+    logError: (label, error) => {
+      console.error(`[minimal-tracker] ${label} failed`, error);
+    }
+  });
 
   registerCommands(context, storage);
-  await wireGitIntegration(context, gitDiffProvider, tracker);
-  registerEditorListeners(context, pathRegistry, tracker);
+  await wireGitIntegration(context, runtimeTrackerRef);
+  registerEditorListeners(context, runtimeTrackerRef);
   runtime = Object.freeze({ tracker });
 }
 

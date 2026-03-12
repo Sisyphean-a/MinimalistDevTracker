@@ -1,8 +1,10 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { toLocalDateKey } = require('./dateKey');
+const { createStorageWriter } = require('./storageWriter');
 
 function toDateKey(timestamp) {
-  return new Date(timestamp).toISOString().slice(0, 10);
+  return toLocalDateKey(timestamp);
 }
 
 function emptyProjectRecord() {
@@ -65,14 +67,18 @@ function sortDailyFiles(fileNames) {
     .sort((left, right) => right.localeCompare(left));
 }
 
-function createStorage(globalStoragePath) {
+function createStorage(globalStoragePath, options = {}) {
+  const writer = options.writer ?? createStorageWriter();
+
   async function appendSession(session) {
     const dateKey = toDateKey(session.endTime);
     const filePath = path.join(globalStoragePath, `${dateKey}.json`);
-    await ensureDirectory(globalStoragePath);
-    const dailyData = await readDailyFile(filePath, dateKey);
-    const updated = applySession(dailyData, session);
-    await fs.writeFile(filePath, JSON.stringify(updated, null, 2), 'utf8');
+    return writer.run(filePath, async () => {
+      await ensureDirectory(globalStoragePath);
+      const dailyData = await readDailyFile(filePath, dateKey);
+      const updated = applySession(dailyData, session);
+      await fs.writeFile(filePath, JSON.stringify(updated, null, 2), 'utf8');
+    });
   }
 
   async function readLatestDaily() {
