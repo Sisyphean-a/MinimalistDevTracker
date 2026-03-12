@@ -172,3 +172,81 @@ test('tracks loc by file type and keeps totals equal to per-type sum', async () 
   assert.equal(sessionLogs[0].locAdded, 5);
   assert.equal(sessionLogs[0].locDeleted, 3);
 });
+
+test('commit compensation counts quick commit output when working-tree diff resets', async () => {
+  const clock = createClock(1_000);
+  const sessionLogs = [];
+  const snapshots = [
+    { insertions: 0, deletions: 0, byFileType: {} },
+    { insertions: 0, deletions: 0, byFileType: {} },
+    { insertions: 0, deletions: 0, byFileType: {} }
+  ];
+  const tracker = createTimeTracker({
+    debounceMs: 120_000,
+    now: clock.now,
+    getDiff: () => snapshots.shift(),
+    onSessionFinalized: (session) => sessionLogs.push(session)
+  });
+
+  await tracker.recordActivity('F:/repo-a');
+  clock.advance(3_000);
+  await tracker.handleCommit('F:/repo-a', {
+    insertions: 12,
+    deletions: 4,
+    byFileType: {
+      js: { insertions: 8, deletions: 2 },
+      vue: { insertions: 4, deletions: 2 }
+    }
+  });
+
+  assert.equal(sessionLogs.length, 1);
+  assert.equal(sessionLogs[0].locAdded, 12);
+  assert.equal(sessionLogs[0].locDeleted, 4);
+  assert.deepEqual(sessionLogs[0].locByFileType, {
+    js: { locAdded: 8, locDeleted: 2 },
+    vue: { locAdded: 4, locDeleted: 2 }
+  });
+  await tracker.flushAll();
+});
+
+test('commit compensation does not overcount pre-session carryover', async () => {
+  const clock = createClock(1_000);
+  const sessionLogs = [];
+  const snapshots = [
+    {
+      insertions: 20,
+      deletions: 5,
+      byFileType: { js: { insertions: 20, deletions: 5 } }
+    },
+    {
+      insertions: 10,
+      deletions: 2,
+      byFileType: { js: { insertions: 10, deletions: 2 } }
+    },
+    {
+      insertions: 0,
+      deletions: 0,
+      byFileType: {}
+    }
+  ];
+  const tracker = createTimeTracker({
+    debounceMs: 120_000,
+    now: clock.now,
+    getDiff: () => snapshots.shift(),
+    onSessionFinalized: (session) => sessionLogs.push(session)
+  });
+
+  await tracker.recordActivity('F:/repo-a');
+  clock.advance(2_000);
+  await tracker.handleCommit('F:/repo-a', {
+    insertions: 10,
+    deletions: 3,
+    byFileType: { js: { insertions: 10, deletions: 3 } }
+  });
+
+  assert.equal(sessionLogs.length, 1);
+  assert.equal(sessionLogs[0].locAdded, 0);
+  assert.equal(sessionLogs[0].locDeleted, 0);
+  assert.deepEqual(sessionLogs[0].locByFileType, {});
+  await tracker.flushAll();
+});

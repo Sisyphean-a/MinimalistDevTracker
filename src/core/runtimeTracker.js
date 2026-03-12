@@ -36,8 +36,14 @@ function createRuntimeTracker(options) {
     safeInvokeAsync('recordActivity', () => activityTracker.recordActivity(repoPath));
   }
 
-  function handleCommit(repoPath) {
-    safeInvokeAsync('handleCommit', () => activityTracker.handleCommit(repoPath));
+  function handleCommit(repoPath, commitHash) {
+    safeInvokeAsync('handleCommit', async () => {
+      let commitDiff = null;
+      if (commitHash && typeof gitDiffProvider.getCommitDiff === 'function') {
+        commitDiff = await gitDiffProvider.getCommitDiff(repoPath, commitHash);
+      }
+      await activityTracker.handleCommit(repoPath, commitDiff);
+    });
   }
 
   function recordPathActivity(fsPath) {

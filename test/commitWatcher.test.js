@@ -23,7 +23,7 @@ function createMockRepo(rootPath, commit) {
 test('triggers onCommit only when HEAD commit hash changes', () => {
   const commits = [];
   const watcher = createCommitWatcher({
-    onCommit: (repoPath) => commits.push(repoPath)
+    onCommit: (repoPath, commitHash) => commits.push({ repoPath, commitHash })
   });
 
   const repo = createMockRepo('F:/repo/a', 'a1');
@@ -36,7 +36,7 @@ test('triggers onCommit only when HEAD commit hash changes', () => {
   repo.state.HEAD.commit = 'a2';
   repo.emitChange();
 
-  assert.deepEqual(commits, ['f:/repo/a']);
+  assert.deepEqual(commits, [{ repoPath: 'f:/repo/a', commitHash: 'a2' }]);
 });
 
 test('ignores repositories without root path or head', () => {

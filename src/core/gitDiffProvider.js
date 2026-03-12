@@ -92,9 +92,18 @@ function createGitDiffProvider(vscode, options = {}) {
     return parseNumStat(stdout);
   }
 
+  async function getCommitDiff(repoPath, commitHash) {
+    const repo = getRepoFromPath(repoPath);
+    const targetRepoPath = repo ? repo.rootUri.fsPath : repoPath;
+    const ref = commitHash ?? 'HEAD';
+    const stdout = await gitClient.run(['-C', targetRepoPath, 'show', '--numstat', '--format=', ref]);
+    return parseNumStat(stdout);
+  }
+
   return Object.freeze({
     bindRepository,
-    getDiff
+    getDiff,
+    getCommitDiff
   });
 }
 

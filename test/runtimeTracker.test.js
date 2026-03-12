@@ -65,3 +65,39 @@ test('recordEditorActivity catches rejected promises and reports error', async (
   assert.equal(errors[0].label, 'recordActivity');
   assert.match(errors[0].error.message, /boom/);
 });
+
+test('handleCommit loads commit diff and forwards to activity tracker', async () => {
+  const calls = [];
+  const tracker = createRuntimeTracker({
+    pathRegistry: {
+      isAllowed: () => true,
+      resolveRepoPath: () => 'f:/repo/main'
+    },
+    activityTracker: {
+      recordActivity: () => Promise.resolve(),
+      handleCommit: async (repoPath, commitDiff) => {
+        calls.push({ repoPath, commitDiff });
+      }
+    },
+    gitDiffProvider: {
+      bindRepository: () => {},
+      getCommitDiff: async () => ({
+        insertions: 10,
+        deletions: 2,
+        byFileType: { js: { insertions: 10, deletions: 2 } }
+      })
+    },
+    commitWatcher: {
+      trackRepository: () => createFakeDisposable()
+    },
+    logError: () => {}
+  });
+
+  tracker.handleCommit('f:/repo/main', 'abc123');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].repoPath, 'f:/repo/main');
+  assert.equal(calls[0].commitDiff.insertions, 10);
+  assert.equal(calls[0].commitDiff.deletions, 2);
+});

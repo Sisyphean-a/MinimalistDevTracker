@@ -157,11 +157,11 @@ async function activate(context) {
   let runtimeTrackerRef = null;
   const commitWatcher = createCommitWatcher({
     normalizer,
-    onCommit: (repoPath) => {
+    onCommit: (repoPath, commitHash) => {
       if (!runtimeTrackerRef) {
         throw new Error('runtime tracker not initialized before commit callback');
       }
-      runtimeTrackerRef.handleCommit(repoPath);
+      runtimeTrackerRef.handleCommit(repoPath, commitHash);
     }
   });
   runtimeTrackerRef = createRuntimeTracker({

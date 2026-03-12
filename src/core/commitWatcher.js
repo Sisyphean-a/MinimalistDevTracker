@@ -28,7 +28,7 @@ function createCommitWatcher(options) {
       if (!previous || !current || previous === current) {
         return;
       }
-      onCommit(repoPath);
+      onCommit(repoPath, current);
     });
   }
 
