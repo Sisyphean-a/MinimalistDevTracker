@@ -32,6 +32,19 @@
           },
           "default": [],
           "description": "Absolute root repository paths to track"
+        },
+        "minimalTracker.fileWatch.excludeGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Glob patterns (relative to tracked roots) to exclude from file activity watcher"
+        },
+        "minimalTracker.flushBeforeReport": {
+          "type": "boolean",
+          "default": true,
+          "description": "Flush active tracking sessions before opening daily report"
         }
       }
     }

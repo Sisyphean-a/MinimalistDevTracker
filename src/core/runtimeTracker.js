@@ -3,7 +3,7 @@ function isFileDocument(document) {
 }
 
 function createRuntimeTracker(options) {
-  const pathRegistry = options.pathRegistry;
+  let pathRegistry = options.pathRegistry;
   const activityTracker = options.activityTracker;
   const gitDiffProvider = options.gitDiffProvider;
   const commitWatcher = options.commitWatcher;
@@ -40,6 +40,21 @@ function createRuntimeTracker(options) {
     safeInvokeAsync('handleCommit', () => activityTracker.handleCommit(repoPath));
   }
 
+  function recordPathActivity(fsPath) {
+    const repoPath = pathRegistry.resolveRepoPath(fsPath);
+    if (!repoPath) {
+      return;
+    }
+    safeInvokeAsync('recordPathActivity', () => activityTracker.recordActivity(repoPath));
+  }
+
+  function setPathRegistry(nextPathRegistry) {
+    if (typeof nextPathRegistry?.isAllowed !== 'function' || typeof nextPathRegistry?.resolveRepoPath !== 'function') {
+      throw new Error('pathRegistry must expose isAllowed() and resolveRepoPath()');
+    }
+    pathRegistry = nextPathRegistry;
+  }
+
   function registerRepository(input) {
     gitDiffProvider.bindRepository(input.repo);
     const disposable = commitWatcher.trackRepository(input.repo);
@@ -48,6 +63,8 @@ function createRuntimeTracker(options) {
 
   return Object.freeze({
     recordEditorActivity,
+    recordPathActivity,
+    setPathRegistry,
     handleCommit,
     registerRepository
   });

@@ -9,16 +9,43 @@ const { createCommitWatcher } = require('./core/commitWatcher');
 const { createRuntimeTracker } = require('./core/runtimeTracker');
 const { createGitClient } = require('./core/gitClient');
 const { createPathNormalizer } = require('./core/pathKey');
+const { createFileActivityWatcher } = require('./core/fileActivityWatcher');
+const { createOpenDailyReportHandler, createTrackedRuntimeReloader } = require('./core/extensionRuntime');
 const { renderDailyReportHtml } = require('./ui/dailyReportView');
 
 const REPORT_VIEW_TYPE = 'minimalTracker.dailyReport';
 const REPORT_COMMAND_ID = 'minimalTracker.openDailyReport';
+const TRACKED_PATHS_KEY = 'minimalTracker.trackedPaths';
+const EXCLUDE_GLOBS_KEY = 'minimalTracker.fileWatch.excludeGlobs';
 let runtime = null;
 
+function reportRuntimeError(label, error) {
+  console.error(`[minimal-tracker] ${label} failed`, error);
+}
+
+function getMinimalTrackerConfig() {
+  return vscode.workspace.getConfiguration('minimalTracker');
+}
+
+function readStringArrayConfig(path, fallback = []) {
+  const rawValue = getMinimalTrackerConfig().get(path, fallback);
+  if (!Array.isArray(rawValue)) {
+    return fallback;
+  }
+  return rawValue.filter((value) => typeof value === 'string' && value.trim());
+}
+
 function getTrackedPaths() {
+  return readStringArrayConfig('trackedPaths', []);
+}
+
+function getExcludeGlobs() {
+  return readStringArrayConfig('fileWatch.excludeGlobs', []);
+}
+
+function shouldFlushBeforeReport() {
   const config = vscode.workspace.getConfiguration('minimalTracker');
-  const list = config.get('trackedPaths', []);
-  return list.filter((value) => typeof value === 'string' && value.trim());
+  return config.get('flushBeforeReport', true);
 }
 
 function createTracker(storage, gitDiffProvider) {
@@ -87,9 +114,33 @@ async function showDailyReport(storage) {
   panel.webview.html = renderDailyReportHtml(data);
 }
 
-function registerCommands(context, storage) {
+function registerCommands(context, input) {
+  const openDailyReport = createOpenDailyReportHandler({
+    shouldFlushBeforeReport,
+    tracker: input.tracker,
+    showDailyReport: () => showDailyReport(input.storage)
+  });
   const disposable = vscode.commands.registerCommand(REPORT_COMMAND_ID, async () => {
-    await showDailyReport(storage);
+    await openDailyReport();
+  });
+  context.subscriptions.push(disposable);
+}
+
+function registerConfigurationReload(context, input) {
+  const reloadTrackedRuntime = createTrackedRuntimeReloader({
+    loadTrackedPaths: getTrackedPaths,
+    loadExcludeGlobs: getExcludeGlobs,
+    buildPathRegistry: (trackedPaths) => buildPathRegistry(trackedPaths, input.pathRegistryDeps),
+    runtimeTracker: input.runtimeTracker,
+    fileActivityWatcher: input.fileActivityWatcher
+  });
+  const disposable = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (!event.affectsConfiguration(TRACKED_PATHS_KEY) && !event.affectsConfiguration(EXCLUDE_GLOBS_KEY)) {
+      return;
+    }
+    Promise.resolve()
+      .then(() => reloadTrackedRuntime())
+      .catch((error) => reportRuntimeError('reloadTrackedRuntime', error));
   });
   context.subscriptions.push(disposable);
 }
@@ -98,7 +149,8 @@ async function activate(context) {
   const normalizer = createPathNormalizer();
   const gitClient = createGitClient();
   const trackedPaths = getTrackedPaths();
-  const pathRegistry = await buildPathRegistry(trackedPaths, { gitClient, normalizer });
+  const pathRegistryDeps = { gitClient, normalizer };
+  const pathRegistry = await buildPathRegistry(trackedPaths, pathRegistryDeps);
   const storage = createStorage(context.globalStorageUri.fsPath);
   const gitDiffProvider = createGitDiffProvider(vscode, { gitClient, normalizer });
   const tracker = createTracker(storage, gitDiffProvider);
@@ -117,14 +169,25 @@ async function activate(context) {
     activityTracker: tracker,
     gitDiffProvider,
     commitWatcher,
-    logError: (label, error) => {
-      console.error(`[minimal-tracker] ${label} failed`, error);
-    }
+    logError: reportRuntimeError
+  });
+  const fileActivityWatcher = createFileActivityWatcher({
+    vscode,
+    roots: pathRegistry.getAllowedRoots(),
+    excludeGlobs: getExcludeGlobs(),
+    onFileActivity: (fsPath) => runtimeTrackerRef.recordPathActivity(fsPath),
+    logError: reportRuntimeError
   });
 
-  registerCommands(context, storage);
+  registerCommands(context, { storage, tracker });
   await wireGitIntegration(context, runtimeTrackerRef);
   registerEditorListeners(context, runtimeTrackerRef);
+  registerConfigurationReload(context, {
+    runtimeTracker: runtimeTrackerRef,
+    fileActivityWatcher,
+    pathRegistryDeps
+  });
+  context.subscriptions.push(fileActivityWatcher);
   runtime = Object.freeze({ tracker });
 }
 

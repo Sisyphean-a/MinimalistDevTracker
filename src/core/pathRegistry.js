@@ -13,6 +13,7 @@ function createPathRegistry(allowedRoots, options = {}) {
   const normalizedRoots = allowedRoots
     .map((rootPath) => normalizePath(rootPath, normalizer))
     .sort((left, right) => right.length - left.length);
+  const rootsWithoutSlash = normalizedRoots.map((rootPath) => trimTrailingSlash(rootPath));
 
   function resolveRepoPath(targetPath) {
     const normalizedTarget = normalizePath(targetPath, normalizer);
@@ -26,7 +27,8 @@ function createPathRegistry(allowedRoots, options = {}) {
 
   return Object.freeze({
     isAllowed,
-    resolveRepoPath
+    resolveRepoPath,
+    getAllowedRoots: () => rootsWithoutSlash.slice()
   });
 }
 
