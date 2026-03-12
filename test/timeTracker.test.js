@@ -129,3 +129,46 @@ test('never outputs negative loc when working-tree diff shrinks during a session
   assert.equal(sessionLogs[0].locAdded, 0);
   assert.equal(sessionLogs[0].locDeleted, 0);
 });
+
+test('tracks loc by file type and keeps totals equal to per-type sum', async () => {
+  const clock = createClock(1_000);
+  const sessionLogs = [];
+  const snapshots = [
+    {
+      insertions: 10,
+      deletions: 1,
+      byFileType: {
+        js: { insertions: 8, deletions: 1 },
+        vue: { insertions: 2, deletions: 0 }
+      }
+    },
+    {
+      insertions: 15,
+      deletions: 4,
+      byFileType: {
+        js: { insertions: 9, deletions: 2 },
+        vue: { insertions: 4, deletions: 2 },
+        ts: { insertions: 2, deletions: 0 }
+      }
+    }
+  ];
+  const tracker = createTimeTracker({
+    debounceMs: 120_000,
+    now: clock.now,
+    getDiff: () => snapshots.shift(),
+    onSessionFinalized: (session) => sessionLogs.push(session)
+  });
+
+  await tracker.recordActivity('F:/repo-a');
+  clock.advance(10_000);
+  await tracker.flushAll();
+
+  assert.equal(sessionLogs.length, 1);
+  assert.deepEqual(sessionLogs[0].locByFileType, {
+    js: { locAdded: 1, locDeleted: 1 },
+    vue: { locAdded: 2, locDeleted: 2 },
+    ts: { locAdded: 2, locDeleted: 0 }
+  });
+  assert.equal(sessionLogs[0].locAdded, 5);
+  assert.equal(sessionLogs[0].locDeleted, 3);
+});

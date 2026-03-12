@@ -11,6 +11,10 @@ test('renderDailyReportHtml includes project rows and totals', () => {
         totalActiveTimeMs: 7_200_000,
         totalLocAdded: 20,
         totalLocDeleted: 5,
+        locByFileType: {
+          js: { locAdded: 12, locDeleted: 3 },
+          vue: { locAdded: 8, locDeleted: 2 }
+        },
         sessions: []
       }
     }
@@ -20,6 +24,9 @@ test('renderDailyReportHtml includes project rows and totals', () => {
   assert.match(html, /f:\/repo\/main/);
   assert.match(html, /20/);
   assert.match(html, /5/);
+  assert.match(html, /按文件类型统计/);
+  assert.match(html, /js/);
+  assert.match(html, /vue/);
 });
 
 test('renderDailyReportHtml handles empty data', () => {

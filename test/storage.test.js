@@ -62,3 +62,45 @@ test('appendSession keeps all sessions when writing concurrently to same day fil
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('appendSession aggregates locByFileType and keeps project totals', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-by-type-'));
+  const storage = createStorage(dir);
+
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    startTime: Date.parse('2026-03-12T01:00:00.000Z'),
+    endTime: Date.parse('2026-03-12T02:00:00.000Z'),
+    durationMs: 3_600_000,
+    locAdded: 7,
+    locDeleted: 3,
+    locByFileType: {
+      js: { locAdded: 5, locDeleted: 2 },
+      vue: { locAdded: 2, locDeleted: 1 }
+    }
+  });
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    startTime: Date.parse('2026-03-12T02:00:00.000Z'),
+    endTime: Date.parse('2026-03-12T03:00:00.000Z'),
+    durationMs: 3_600_000,
+    locAdded: 4,
+    locDeleted: 2,
+    locByFileType: {
+      js: { locAdded: 1, locDeleted: 1 },
+      ts: { locAdded: 3, locDeleted: 1 }
+    }
+  });
+
+  const latest = await storage.readLatestDaily();
+  const project = latest.projects['f:/repo/main'];
+  assert.equal(project.totalLocAdded, 11);
+  assert.equal(project.totalLocDeleted, 5);
+  assert.deepEqual(project.locByFileType, {
+    js: { locAdded: 6, locDeleted: 3 },
+    vue: { locAdded: 2, locDeleted: 1 },
+    ts: { locAdded: 3, locDeleted: 1 }
+  });
+
+  await fs.rm(dir, { recursive: true, force: true });
+});

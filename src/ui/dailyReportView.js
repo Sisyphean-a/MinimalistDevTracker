@@ -15,6 +15,24 @@ function formatDuration(durationMs) {
   return `${hours}h ${minutes}m ${seconds}s`;
 }
 
+function mergeByFileType(output, locByFileType) {
+  Object.entries(locByFileType ?? {}).forEach(([fileType, metrics]) => {
+    const existing = output[fileType] ?? { locAdded: 0, locDeleted: 0 };
+    output[fileType] = {
+      locAdded: existing.locAdded + (metrics.locAdded ?? 0),
+      locDeleted: existing.locDeleted + (metrics.locDeleted ?? 0)
+    };
+  });
+}
+
+function aggregateByFileType(projects) {
+  const output = {};
+  Object.values(projects).forEach((project) => {
+    mergeByFileType(output, project.locByFileType);
+  });
+  return output;
+}
+
 function renderRows(projects) {
   return Object.entries(projects)
     .map(([repoPath, metrics]) => {
@@ -31,12 +49,33 @@ function renderRows(projects) {
     .join('');
 }
 
+function renderFileTypeRows(fileTypeStats) {
+  return Object.entries(fileTypeStats)
+    .sort((left, right) => {
+      const leftTotal = left[1].locAdded + left[1].locDeleted;
+      const rightTotal = right[1].locAdded + right[1].locDeleted;
+      return rightTotal - leftTotal;
+    })
+    .map(([fileType, metrics]) => {
+      return [
+        '<tr>',
+        `<td>${escapeHtml(fileType)}</td>`,
+        `<td>${escapeHtml(metrics.locAdded)}</td>`,
+        `<td>${escapeHtml(metrics.locDeleted)}</td>`,
+        '</tr>'
+      ].join('');
+    })
+    .join('');
+}
+
 function renderDailyReportHtml(dailyData) {
   if (!dailyData || !dailyData.projects || Object.keys(dailyData.projects).length === 0) {
     return '<html><body><h2>Minimalist Dev Tracker</h2><p>暂无统计数据</p></body></html>';
   }
 
   const rows = renderRows(dailyData.projects);
+  const fileTypeStats = aggregateByFileType(dailyData.projects);
+  const fileTypeRows = renderFileTypeRows(fileTypeStats);
   const title = `Minimalist Dev Tracker - ${escapeHtml(dailyData.date)}`;
 
   return [
@@ -52,6 +91,11 @@ function renderDailyReportHtml(dailyData) {
     '<table>',
     '<thead><tr><th>项目/工作树</th><th>活跃时长</th><th>新增 LOC</th><th>删除 LOC</th><th>会话数</th></tr></thead>',
     `<tbody>${rows}</tbody>`,
+    '</table>',
+    '<h3>按文件类型统计</h3>',
+    '<table>',
+    '<thead><tr><th>文件类型</th><th>新增 LOC</th><th>删除 LOC</th></tr></thead>',
+    `<tbody>${fileTypeRows || '<tr><td colspan="3">暂无按类型统计数据</td></tr>'}</tbody>`,
     '</table>',
     '</body>',
     '</html>'

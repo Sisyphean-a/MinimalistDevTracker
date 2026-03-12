@@ -12,6 +12,7 @@ function emptyProjectRecord() {
     totalActiveTimeMs: 0,
     totalLocAdded: 0,
     totalLocDeleted: 0,
+    locByFileType: {},
     sessions: []
   };
 }
@@ -37,18 +38,32 @@ async function readDailyFile(filePath, dateKey) {
 }
 
 function applySession(dailyData, session) {
+  function mergeLocByFileType(existingMap, deltaMap) {
+    const output = { ...(existingMap ?? {}) };
+    Object.entries(deltaMap ?? {}).forEach(([fileType, metrics]) => {
+      const current = output[fileType] ?? { locAdded: 0, locDeleted: 0 };
+      output[fileType] = {
+        locAdded: current.locAdded + metrics.locAdded,
+        locDeleted: current.locDeleted + metrics.locDeleted
+      };
+    });
+    return output;
+  }
+
   const currentProjects = dailyData.projects ?? {};
   const existing = currentProjects[session.repoPath] ?? emptyProjectRecord();
   const nextProject = {
     totalActiveTimeMs: existing.totalActiveTimeMs + session.durationMs,
     totalLocAdded: existing.totalLocAdded + session.locAdded,
     totalLocDeleted: existing.totalLocDeleted + session.locDeleted,
+    locByFileType: mergeLocByFileType(existing.locByFileType, session.locByFileType),
     sessions: existing.sessions.concat({
       startTime: session.startTime,
       endTime: session.endTime,
       durationMs: session.durationMs,
       locAdded: session.locAdded,
-      locDeleted: session.locDeleted
+      locDeleted: session.locDeleted,
+      locByFileType: session.locByFileType ?? {}
     })
   };
 

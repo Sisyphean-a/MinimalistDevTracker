@@ -5,6 +5,42 @@ function toNonNegativeDelta(endValue, startValue) {
   return Math.max(0, endValue - startValue);
 }
 
+function readFileTypeMap(diff) {
+  return diff?.byFileType ?? {};
+}
+
+function buildFileTypeDelta(endDiff, startDiff) {
+  const endByType = readFileTypeMap(endDiff);
+  const startByType = readFileTypeMap(startDiff);
+  const fileTypes = new Set([...Object.keys(endByType), ...Object.keys(startByType)]);
+  const output = {};
+
+  fileTypes.forEach((fileType) => {
+    const endMetrics = endByType[fileType] ?? { insertions: 0, deletions: 0 };
+    const startMetrics = startByType[fileType] ?? { insertions: 0, deletions: 0 };
+    const locAdded = toNonNegativeDelta(endMetrics.insertions, startMetrics.insertions);
+    const locDeleted = toNonNegativeDelta(endMetrics.deletions, startMetrics.deletions);
+    if (locAdded === 0 && locDeleted === 0) {
+      return;
+    }
+    output[fileType] = { locAdded, locDeleted };
+  });
+
+  return output;
+}
+
+function sumLocByFileType(locByFileType) {
+  return Object.values(locByFileType).reduce(
+    (acc, item) => {
+      return {
+        locAdded: acc.locAdded + item.locAdded,
+        locDeleted: acc.locDeleted + item.locDeleted
+      };
+    },
+    { locAdded: 0, locDeleted: 0 }
+  );
+}
+
 function createRepoState(startAt, baselineDiff) {
   return {
     status: 'ACTIVE',
@@ -16,13 +52,21 @@ function createRepoState(startAt, baselineDiff) {
 
 function createSession(sessionInput) {
   const durationPenalty = sessionInput.subtractDebounce ? sessionInput.debounceMs : 0;
+  const locByFileType = buildFileTypeDelta(sessionInput.endDiff, sessionInput.state.baselineDiff);
+  const locByFileTypeSum = sumLocByFileType(locByFileType);
+  const hasTypeBreakdown = Object.keys(locByFileType).length > 0;
   return Object.freeze({
     repoPath: sessionInput.repoPath,
     startTime: sessionInput.state.sessionStartMs,
     endTime: sessionInput.endTime,
     durationMs: Math.max(0, sessionInput.endTime - sessionInput.state.sessionStartMs - durationPenalty),
-    locAdded: toNonNegativeDelta(sessionInput.endDiff.insertions, sessionInput.state.baselineDiff.insertions),
-    locDeleted: toNonNegativeDelta(sessionInput.endDiff.deletions, sessionInput.state.baselineDiff.deletions)
+    locAdded: hasTypeBreakdown
+      ? locByFileTypeSum.locAdded
+      : toNonNegativeDelta(sessionInput.endDiff.insertions, sessionInput.state.baselineDiff.insertions),
+    locDeleted: hasTypeBreakdown
+      ? locByFileTypeSum.locDeleted
+      : toNonNegativeDelta(sessionInput.endDiff.deletions, sessionInput.state.baselineDiff.deletions),
+    locByFileType
   });
 }
 

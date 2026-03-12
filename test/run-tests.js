@@ -13,6 +13,7 @@ require('./dateKey.test');
 require('./storageWriter.test');
 require('./pathKey.test');
 require('./gitClient.test');
+require('./gitDiffProvider.test');
 require('./storage.test');
 require('./dailyReportView.test');
 
