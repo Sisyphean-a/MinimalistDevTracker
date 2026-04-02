@@ -10,13 +10,14 @@ const { createRuntimeTracker } = require('./core/runtimeTracker');
 const { createGitClient } = require('./core/gitClient');
 const { createPathNormalizer } = require('./core/pathKey');
 const { createFileActivityWatcher } = require('./core/fileActivityWatcher');
-const { createOpenDailyReportHandler, createTrackedRuntimeReloader } = require('./core/extensionRuntime');
+const { createTrackedRuntimeReloader } = require('./core/extensionRuntime');
 const { renderDailyReportHtml } = require('./ui/dailyReportView');
 
 const REPORT_VIEW_TYPE = 'minimalTracker.dailyReport';
 const REPORT_COMMAND_ID = 'minimalTracker.openDailyReport';
 const TRACKED_PATHS_KEY = 'minimalTracker.trackedPaths';
 const EXCLUDE_GLOBS_KEY = 'minimalTracker.fileWatch.excludeGlobs';
+const REFRESH_INTERVAL_MS = 30_000;
 let runtime = null;
 
 function reportRuntimeError(label, error) {
@@ -52,6 +53,7 @@ function createTracker(storage, gitDiffProvider) {
   return createTimeTracker({
     now: () => Date.now(),
     getDiff: (repoPath) => gitDiffProvider.getDiff(repoPath),
+    getBranch: (repoPath) => gitDiffProvider.getCurrentBranch(repoPath),
     onSessionFinalized: async (session) => {
       try {
         await storage.appendSession(session);
@@ -59,6 +61,86 @@ function createTracker(storage, gitDiffProvider) {
         console.error('[minimal-tracker] failed to persist session', error);
       }
     }
+  });
+}
+
+function createReportPanelController(context, input) {
+  let panel = null;
+  let timerHandle = null;
+
+  function clearTimer() {
+    if (timerHandle) {
+      clearInterval(timerHandle);
+      timerHandle = null;
+    }
+  }
+
+  async function refreshReport() {
+    if (!panel) {
+      return;
+    }
+    if (shouldFlushBeforeReport()) {
+      await input.tracker.flushAll();
+    }
+    const [data, trendData] = await Promise.all([
+      input.storage.readLatestDaily(),
+      input.storage.readTrendData([7, 30])
+    ]);
+    panel.webview.html = renderDailyReportHtml(data, {
+      refreshIntervalMs: REFRESH_INTERVAL_MS,
+      trendData
+    });
+  }
+
+  function ensurePanel() {
+    if (panel) {
+      panel.reveal(vscode.ViewColumn.One);
+      return panel;
+    }
+
+    panel = vscode.window.createWebviewPanel(
+      REPORT_VIEW_TYPE,
+      'Minimalist Dev Tracker Report',
+      vscode.ViewColumn.One,
+      { enableScripts: true }
+    );
+    panel.onDidDispose(() => {
+      clearTimer();
+      panel = null;
+    }, null, context.subscriptions);
+    panel.webview.onDidReceiveMessage((message) => {
+      if (message?.type !== 'refresh-report') {
+        return;
+      }
+      Promise.resolve(refreshReport()).catch((error) => reportRuntimeError('refreshReport', error));
+    }, null, context.subscriptions);
+    return panel;
+  }
+
+  function ensureTimer() {
+    if (timerHandle) {
+      return;
+    }
+    timerHandle = setInterval(() => {
+      Promise.resolve(refreshReport()).catch((error) => reportRuntimeError('refreshReport', error));
+    }, REFRESH_INTERVAL_MS);
+  }
+
+  async function open() {
+    ensurePanel();
+    await refreshReport();
+    ensureTimer();
+  }
+
+  function dispose() {
+    clearTimer();
+    panel?.dispose();
+    panel = null;
+  }
+
+  return Object.freeze({
+    open,
+    dispose
   });
 }
 
@@ -103,25 +185,9 @@ async function buildPathRegistry(trackedPaths, input) {
   });
 }
 
-async function showDailyReport(storage) {
-  const data = await storage.readLatestDaily();
-  const panel = vscode.window.createWebviewPanel(
-    REPORT_VIEW_TYPE,
-    'Minimalist Dev Tracker Report',
-    vscode.ViewColumn.One,
-    { enableScripts: false }
-  );
-  panel.webview.html = renderDailyReportHtml(data);
-}
-
 function registerCommands(context, input) {
-  const openDailyReport = createOpenDailyReportHandler({
-    shouldFlushBeforeReport,
-    tracker: input.tracker,
-    showDailyReport: () => showDailyReport(input.storage)
-  });
   const disposable = vscode.commands.registerCommand(REPORT_COMMAND_ID, async () => {
-    await openDailyReport();
+    await input.reportPanelController.open();
   });
   context.subscriptions.push(disposable);
 }
@@ -154,6 +220,7 @@ async function activate(context) {
   const storage = createStorage(context.globalStorageUri.fsPath);
   const gitDiffProvider = createGitDiffProvider(vscode, { gitClient, normalizer });
   const tracker = createTracker(storage, gitDiffProvider);
+  const reportPanelController = createReportPanelController(context, { tracker, storage });
   let runtimeTrackerRef = null;
   const commitWatcher = createCommitWatcher({
     normalizer,
@@ -179,7 +246,7 @@ async function activate(context) {
     logError: reportRuntimeError
   });
 
-  registerCommands(context, { storage, tracker });
+  registerCommands(context, { reportPanelController });
   await wireGitIntegration(context, runtimeTrackerRef);
   registerEditorListeners(context, runtimeTrackerRef);
   registerConfigurationReload(context, {
@@ -188,13 +255,14 @@ async function activate(context) {
     pathRegistryDeps
   });
   context.subscriptions.push(fileActivityWatcher);
-  runtime = Object.freeze({ tracker });
+  runtime = Object.freeze({ tracker, reportPanelController });
 }
 
 async function deactivate() {
   if (!runtime) {
     return;
   }
+  runtime.reportPanelController.dispose();
   await runtime.tracker.flushAll();
   runtime = null;
 }
