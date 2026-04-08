@@ -7,7 +7,8 @@ function createFakeDisposable() {
   return { dispose: () => {} };
 }
 
-test('registerRepository pushes disposable via injected subscriptions', () => {
+test('registerRepository pushes disposable via injected subscriptions', async () => {
+  const primed = [];
   const subscriptions = [];
   const tracker = createRuntimeTracker({
     pathRegistry: {
@@ -16,7 +17,10 @@ test('registerRepository pushes disposable via injected subscriptions', () => {
     },
     activityTracker: {
       recordActivity: () => Promise.resolve(),
-      handleCommit: () => Promise.resolve()
+      handleCommit: () => Promise.resolve(),
+      primeBaseline: async (repoPath) => {
+        primed.push(repoPath);
+      }
     },
     gitDiffProvider: {
       bindRepository: () => {}
@@ -31,9 +35,11 @@ test('registerRepository pushes disposable via injected subscriptions', () => {
     repo: { rootUri: { fsPath: 'F:/repo/main' } },
     subscriptions
   });
+  await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(subscriptions.length, 1);
   assert.equal(typeof subscriptions[0].dispose, 'function');
+  assert.deepEqual(primed, ['F:/repo/main']);
 });
 
 test('recordEditorActivity catches rejected promises and reports error', async () => {
@@ -66,7 +72,38 @@ test('recordEditorActivity catches rejected promises and reports error', async (
   assert.match(errors[0].error.message, /boom/);
 });
 
-test('handleCommit loads commit diff and forwards to activity tracker', async () => {
+test('recordEditorActivity forwards repoPath and fsPath to activity tracker', async () => {
+  const calls = [];
+  const tracker = createRuntimeTracker({
+    pathRegistry: {
+      isAllowed: () => true,
+      resolveRepoPath: () => 'f:/repo/main'
+    },
+    activityTracker: {
+      recordActivity: async (repoPath, fsPath) => {
+        calls.push({ repoPath, fsPath });
+      },
+      handleCommit: () => Promise.resolve()
+    },
+    gitDiffProvider: {
+      bindRepository: () => {}
+    },
+    commitWatcher: {
+      trackRepository: () => createFakeDisposable()
+    },
+    logError: () => {}
+  });
+
+  tracker.recordEditorActivity({ uri: { scheme: 'file', fsPath: 'F:/repo/main/src/app.js' } });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(calls, [{
+    repoPath: 'f:/repo/main',
+    fsPath: 'F:/repo/main/src/app.js'
+  }]);
+});
+
+test('handleCommit forwards commit hash to activity tracker', async () => {
   const calls = [];
   const tracker = createRuntimeTracker({
     pathRegistry: {
@@ -75,17 +112,12 @@ test('handleCommit loads commit diff and forwards to activity tracker', async ()
     },
     activityTracker: {
       recordActivity: () => Promise.resolve(),
-      handleCommit: async (repoPath, commitDiff) => {
-        calls.push({ repoPath, commitDiff });
+      handleCommit: async (repoPath, commitHash) => {
+        calls.push({ repoPath, commitHash });
       }
     },
     gitDiffProvider: {
-      bindRepository: () => {},
-      getCommitDiff: async () => ({
-        insertions: 10,
-        deletions: 2,
-        byFileType: { js: { insertions: 10, deletions: 2 } }
-      })
+      bindRepository: () => {}
     },
     commitWatcher: {
       trackRepository: () => createFakeDisposable()
@@ -98,6 +130,5 @@ test('handleCommit loads commit diff and forwards to activity tracker', async ()
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].repoPath, 'f:/repo/main');
-  assert.equal(calls[0].commitDiff.insertions, 10);
-  assert.equal(calls[0].commitDiff.deletions, 2);
+  assert.equal(calls[0].commitHash, 'abc123');
 });

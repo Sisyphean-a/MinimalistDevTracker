@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { toLocalDateKey } = require('./dateKey');
+const { filterDailyDataByRepoPaths } = require('./reportScope');
 const { createStorageWriter } = require('./storageWriter');
 
 const TREND_INDEX_FILE = 'trend-index.json';
@@ -302,7 +303,26 @@ function normalizeWindows(rawWindows) {
     .sort((left, right) => left - right);
 }
 
-async function rebuildTrendIndexFromDailyFiles(globalStoragePath) {
+function normalizeTrendRequest(input) {
+  if (Array.isArray(input) || input === undefined) {
+    return {
+      windows: input ?? [7, 30],
+      repoPaths: null
+    };
+  }
+  return {
+    windows: input?.windows ?? [7, 30],
+    repoPaths: input?.repoPaths ?? null
+  };
+}
+
+function normalizeDailyRequest(input) {
+  return {
+    repoPaths: input?.repoPaths ?? null
+  };
+}
+
+async function rebuildTrendIndexFromDailyFiles(globalStoragePath, repoPaths = null) {
   try {
     const files = await fs.readdir(globalStoragePath);
     const sorted = sortDailyFiles(files);
@@ -310,7 +330,11 @@ async function rebuildTrendIndexFromDailyFiles(globalStoragePath) {
     for (const fileName of sorted) {
       const dateKey = fileName.slice(0, -5);
       const daily = await readJson(path.join(globalStoragePath, fileName));
-      const projects = Object.values(daily.projects ?? {});
+      const filtered = filterDailyDataByRepoPaths(daily, repoPaths);
+      if (!filtered) {
+        continue;
+      }
+      const projects = Object.values(filtered.projects);
       const dayTotals = projects.reduce((acc, project) => {
         return {
           totalActiveTimeMs: acc.totalActiveTimeMs + (project.totalActiveTimeMs ?? 0),
@@ -372,14 +396,19 @@ function createStorage(globalStoragePath, options = {}) {
     });
   }
 
-  async function readLatestDaily() {
+  async function readLatestDaily(input = null) {
+    const request = normalizeDailyRequest(input);
     try {
       const files = await fs.readdir(globalStoragePath);
       const sorted = sortDailyFiles(files);
       if (sorted.length === 0) {
         return null;
       }
-      return readJson(path.join(globalStoragePath, sorted[0]));
+      const latest = await readJson(path.join(globalStoragePath, sorted[0]));
+      if (!request.repoPaths) {
+        return latest;
+      }
+      return filterDailyDataByRepoPaths(latest, request.repoPaths);
     } catch (error) {
       if (error.code === 'ENOENT') {
         return null;
@@ -388,9 +417,22 @@ function createStorage(globalStoragePath, options = {}) {
     }
   }
 
-  async function readTrendData(windows = [7, 30]) {
-    const normalizedWindows = normalizeWindows(windows);
+  async function readTrendData(input = [7, 30]) {
+    const request = normalizeTrendRequest(input);
+    const normalizedWindows = normalizeWindows(request.windows);
     const todayDateKey = toDateKey(now());
+    if (request.repoPaths) {
+      const trendIndex = await rebuildTrendIndexFromDailyFiles(globalStoragePath, request.repoPaths);
+      return {
+        generatedAt: now(),
+        windows: normalizedWindows.reduce((output, windowDays) => {
+          return {
+            ...output,
+            [String(windowDays)]: buildTrendWindow(trendIndex.byDate, todayDateKey, windowDays)
+          };
+        }, {})
+      };
+    }
     const trendIndexPath = path.join(globalStoragePath, TREND_INDEX_FILE);
     let trendIndex = await readTrendIndex(trendIndexPath);
     if (Object.keys(trendIndex.byDate).length === 0) {

@@ -254,3 +254,93 @@ test('readTrendData computes file type share delta versus previous window', asyn
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('readLatestDaily filters projects to target repo paths', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-report-filter-'));
+  const storage = createStorage(dir);
+
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    startTime: Date.parse('2026-03-31T01:00:00.000Z'),
+    endTime: Date.parse('2026-03-31T02:00:00.000Z'),
+    durationMs: 1_000,
+    locAdded: 3,
+    locDeleted: 1
+  });
+  await storage.appendSession({
+    repoPath: 'f:/repo/other',
+    startTime: Date.parse('2026-03-31T03:00:00.000Z'),
+    endTime: Date.parse('2026-03-31T04:00:00.000Z'),
+    durationMs: 1_000,
+    locAdded: 9,
+    locDeleted: 2
+  });
+
+  const latest = await storage.readLatestDaily({
+    repoPaths: ['f:/repo/main']
+  });
+
+  assert.deepEqual(Object.keys(latest.projects), ['f:/repo/main']);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('readTrendData filters repo paths and ignores zero-loc legacy projects during rebuild', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-trend-rebuild-filter-'));
+  const storage = createStorage(dir, {
+    now: () => Date.parse('2026-03-31T10:00:00.000Z')
+  });
+  const dailyFile = path.join(dir, '2026-03-30.json');
+  await fs.writeFile(dailyFile, JSON.stringify({
+    date: '2026-03-30',
+    projects: {
+      'f:/repo/main||main': {
+        repoPath: 'f:/repo/main',
+        branch: 'main',
+        totalActiveTimeMs: 2_000,
+        totalLocAdded: 6,
+        totalLocDeleted: 2,
+        locByFileType: {
+          js: { locAdded: 6, locDeleted: 2 }
+        },
+        sessions: [
+          { startTime: 1, endTime: 2, durationMs: 2_000, locAdded: 6, locDeleted: 2 }
+        ]
+      },
+      'f:/repo/other': {
+        totalActiveTimeMs: 9_000,
+        totalLocAdded: 0,
+        totalLocDeleted: 0,
+        locByFileType: {},
+        sessions: [
+          { startTime: 1, endTime: 2, durationMs: 9_000, locAdded: 0, locDeleted: 0 }
+        ]
+      },
+      'f:/repo/third||main': {
+        repoPath: 'f:/repo/third',
+        branch: 'main',
+        totalActiveTimeMs: 5_000,
+        totalLocAdded: 10,
+        totalLocDeleted: 0,
+        locByFileType: {
+          ts: { locAdded: 10, locDeleted: 0 }
+        },
+        sessions: [
+          { startTime: 1, endTime: 2, durationMs: 5_000, locAdded: 10, locDeleted: 0 }
+        ]
+      }
+    }
+  }, null, 2), 'utf8');
+
+  const trend = await storage.readTrendData({
+    windows: [7],
+    repoPaths: ['f:/repo/main']
+  });
+
+  assert.equal(trend.windows['7'].totals.totalActiveTimeMs, 2_000);
+  assert.equal(trend.windows['7'].totals.totalLocAdded, 6);
+  assert.equal(trend.windows['7'].totals.totalLocDeleted, 2);
+  assert.equal(trend.windows['7'].fileTypeChanges[0].fileType, 'js');
+
+  await fs.rm(dir, { recursive: true, force: true });
+});

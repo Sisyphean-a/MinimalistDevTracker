@@ -33,17 +33,11 @@ function createRuntimeTracker(options) {
     if (!repoPath) {
       return;
     }
-    safeInvokeAsync('recordActivity', () => activityTracker.recordActivity(repoPath));
+    safeInvokeAsync('recordActivity', () => activityTracker.recordActivity(repoPath, document.uri.fsPath));
   }
 
   function handleCommit(repoPath, commitHash) {
-    safeInvokeAsync('handleCommit', async () => {
-      let commitDiff = null;
-      if (commitHash && typeof gitDiffProvider.getCommitDiff === 'function') {
-        commitDiff = await gitDiffProvider.getCommitDiff(repoPath, commitHash);
-      }
-      await activityTracker.handleCommit(repoPath, commitDiff);
-    });
+    safeInvokeAsync('handleCommit', () => activityTracker.handleCommit(repoPath, commitHash));
   }
 
   function recordPathActivity(fsPath) {
@@ -51,7 +45,7 @@ function createRuntimeTracker(options) {
     if (!repoPath) {
       return;
     }
-    safeInvokeAsync('recordPathActivity', () => activityTracker.recordActivity(repoPath));
+    safeInvokeAsync('recordPathActivity', () => activityTracker.recordActivity(repoPath, fsPath));
   }
 
   function setPathRegistry(nextPathRegistry) {
@@ -63,6 +57,10 @@ function createRuntimeTracker(options) {
 
   function registerRepository(input) {
     gitDiffProvider.bindRepository(input.repo);
+    const repoPath = input.repo?.rootUri?.fsPath;
+    if (repoPath && typeof activityTracker.primeBaseline === 'function') {
+      safeInvokeAsync('primeBaseline', () => activityTracker.primeBaseline(repoPath));
+    }
     const disposable = commitWatcher.trackRepository(input.repo);
     input.subscriptions.push(disposable);
   }

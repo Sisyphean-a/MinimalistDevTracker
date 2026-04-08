@@ -1,4 +1,6 @@
 const vscode = require('vscode');
+const os = require('node:os');
+const path = require('node:path');
 
 const { createPathRegistry } = require('./core/pathRegistry');
 const { createTimeTracker } = require('./core/timeTracker');
@@ -11,12 +13,19 @@ const { createGitClient } = require('./core/gitClient');
 const { createPathNormalizer } = require('./core/pathKey');
 const { createFileActivityWatcher } = require('./core/fileActivityWatcher');
 const { createTrackedRuntimeReloader } = require('./core/extensionRuntime');
+const { resolveReportRepoPaths } = require('./core/reportScope');
+const { resolveStorageRootPath } = require('./core/storagePathResolver');
+const { migrateLegacyStorageData } = require('./core/storageMigration');
+const { registerExtensionCommands } = require('./core/extensionCommands');
 const { renderDailyReportHtml } = require('./ui/dailyReportView');
 
 const REPORT_VIEW_TYPE = 'minimalTracker.dailyReport';
 const REPORT_COMMAND_ID = 'minimalTracker.openDailyReport';
+const MIGRATE_STORAGE_COMMAND_ID = 'minimalTracker.migrateLegacyStorageData';
 const TRACKED_PATHS_KEY = 'minimalTracker.trackedPaths';
 const EXCLUDE_GLOBS_KEY = 'minimalTracker.fileWatch.excludeGlobs';
+const SHARED_STORAGE_PATH_KEY = 'minimalTracker.sharedStoragePath';
+const DEFAULT_SHARED_STORAGE_DIR_NAME = '.minimalist-dev-tracker';
 const REFRESH_INTERVAL_MS = 30_000;
 let runtime = null;
 
@@ -49,11 +58,21 @@ function shouldFlushBeforeReport() {
   return config.get('flushBeforeReport', true);
 }
 
+function getSharedStoragePath() {
+  const rawValue = getMinimalTrackerConfig().get('sharedStoragePath', '');
+  if (typeof rawValue !== 'string') {
+    throw new Error(`${SHARED_STORAGE_PATH_KEY} must be a string`);
+  }
+  return rawValue;
+}
+
 function createTracker(storage, gitDiffProvider) {
   return createTimeTracker({
     now: () => Date.now(),
-    getDiff: (repoPath) => gitDiffProvider.getDiff(repoPath),
+    getDiff: (repoPath, input) => gitDiffProvider.getDiff(repoPath, input),
+    getCommitDiff: (repoPath, commitHash, input) => gitDiffProvider.getCommitDiff(repoPath, commitHash, input),
     getBranch: (repoPath) => gitDiffProvider.getCurrentBranch(repoPath),
+    isUntrackedFile: (repoPath, fsPath) => gitDiffProvider.isUntrackedFile(repoPath, fsPath),
     onSessionFinalized: async (session) => {
       try {
         await storage.appendSession(session);
@@ -82,9 +101,10 @@ function createReportPanelController(context, input) {
     if (shouldFlushBeforeReport()) {
       await input.tracker.flushAll();
     }
+    const repoPaths = input.getReportRepoPaths();
     const [data, trendData] = await Promise.all([
-      input.storage.readLatestDaily(),
-      input.storage.readTrendData([7, 30])
+      input.storage.readLatestDaily({ repoPaths }),
+      input.storage.readTrendData({ windows: [7, 30], repoPaths })
     ]);
     panel.webview.html = renderDailyReportHtml(data, {
       refreshIntervalMs: REFRESH_INTERVAL_MS,
@@ -185,18 +205,12 @@ async function buildPathRegistry(trackedPaths, input) {
   });
 }
 
-function registerCommands(context, input) {
-  const disposable = vscode.commands.registerCommand(REPORT_COMMAND_ID, async () => {
-    await input.reportPanelController.open();
-  });
-  context.subscriptions.push(disposable);
-}
-
 function registerConfigurationReload(context, input) {
   const reloadTrackedRuntime = createTrackedRuntimeReloader({
     loadTrackedPaths: getTrackedPaths,
     loadExcludeGlobs: getExcludeGlobs,
     buildPathRegistry: (trackedPaths) => buildPathRegistry(trackedPaths, input.pathRegistryDeps),
+    onPathRegistryUpdated: input.onPathRegistryUpdated,
     runtimeTracker: input.runtimeTracker,
     fileActivityWatcher: input.fileActivityWatcher
   });
@@ -217,10 +231,22 @@ async function activate(context) {
   const trackedPaths = getTrackedPaths();
   const pathRegistryDeps = { gitClient, normalizer };
   const pathRegistry = await buildPathRegistry(trackedPaths, pathRegistryDeps);
-  const storage = createStorage(context.globalStorageUri.fsPath);
+  let currentPathRegistry = pathRegistry;
+  const defaultSharedStoragePath = path.join(os.homedir(), DEFAULT_SHARED_STORAGE_DIR_NAME);
+  const storageRootPath = resolveStorageRootPath({
+    sharedStoragePath: getSharedStoragePath(),
+    defaultStoragePath: context.globalStorageUri.fsPath,
+    defaultSharedStoragePath
+  });
+  const legacyStoragePath = context.globalStorageUri.fsPath;
+  const storage = createStorage(storageRootPath);
   const gitDiffProvider = createGitDiffProvider(vscode, { gitClient, normalizer });
   const tracker = createTracker(storage, gitDiffProvider);
-  const reportPanelController = createReportPanelController(context, { tracker, storage });
+  const reportPanelController = createReportPanelController(context, {
+    tracker,
+    storage,
+    getReportRepoPaths: () => resolveReportRepoPaths(vscode.workspace.workspaceFolders, currentPathRegistry)
+  });
   let runtimeTrackerRef = null;
   const commitWatcher = createCommitWatcher({
     normalizer,
@@ -246,13 +272,25 @@ async function activate(context) {
     logError: reportRuntimeError
   });
 
-  registerCommands(context, { reportPanelController });
+  registerExtensionCommands({
+    vscode,
+    context,
+    reportCommandId: REPORT_COMMAND_ID,
+    migrateCommandId: MIGRATE_STORAGE_COMMAND_ID,
+    reportPanelController,
+    migrateLegacyStorageData,
+    storageRootPath,
+    legacyStoragePath
+  });
   await wireGitIntegration(context, runtimeTrackerRef);
   registerEditorListeners(context, runtimeTrackerRef);
   registerConfigurationReload(context, {
     runtimeTracker: runtimeTrackerRef,
     fileActivityWatcher,
-    pathRegistryDeps
+    pathRegistryDeps,
+    onPathRegistryUpdated: (nextPathRegistry) => {
+      currentPathRegistry = nextPathRegistry;
+    }
   });
   context.subscriptions.push(fileActivityWatcher);
   runtime = Object.freeze({ tracker, reportPanelController });

@@ -22,6 +22,9 @@ function createTrackedRuntimeReloader(options) {
     const trackedPaths = options.loadTrackedPaths();
     const pathRegistry = await options.buildPathRegistry(trackedPaths);
     ensureRegistryContract(pathRegistry);
+    if (typeof options.onPathRegistryUpdated === 'function') {
+      options.onPathRegistryUpdated(pathRegistry);
+    }
     options.runtimeTracker.setPathRegistry(pathRegistry);
     const nextRoots = pathRegistry.getAllowedRoots();
     const excludeGlobs = options.loadExcludeGlobs();

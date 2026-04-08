@@ -250,3 +250,140 @@ test('commit compensation does not overcount pre-session carryover', async () =>
   assert.deepEqual(sessionLogs[0].locByFileType, {});
   await tracker.flushAll();
 });
+
+test('records branch and separates tracked/untracked loc metrics', async () => {
+  const clock = createClock(1_000);
+  const sessionLogs = [];
+  const snapshots = [
+    {
+      tracked: { insertions: 1, deletions: 0, byFileType: { js: { insertions: 1, deletions: 0 } } },
+      untracked: { insertions: 3, deletions: 0, byFileType: { ts: { insertions: 3, deletions: 0 } } },
+      insertions: 4,
+      deletions: 0,
+      byFileType: {
+        js: { insertions: 1, deletions: 0 },
+        ts: { insertions: 3, deletions: 0 }
+      }
+    },
+    {
+      tracked: { insertions: 3, deletions: 2, byFileType: { js: { insertions: 3, deletions: 2 } } },
+      untracked: { insertions: 8, deletions: 0, byFileType: { ts: { insertions: 8, deletions: 0 } } },
+      insertions: 11,
+      deletions: 2,
+      byFileType: {
+        js: { insertions: 3, deletions: 2 },
+        ts: { insertions: 8, deletions: 0 }
+      }
+    }
+  ];
+  const tracker = createTimeTracker({
+    debounceMs: 120_000,
+    now: clock.now,
+    getDiff: () => snapshots.shift(),
+    getBranch: () => 'feature/a',
+    onSessionFinalized: (session) => sessionLogs.push(session)
+  });
+
+  await tracker.recordActivity('F:/repo-a');
+  clock.advance(10_000);
+  await tracker.flushAll();
+
+  assert.equal(sessionLogs.length, 1);
+  assert.equal(sessionLogs[0].branch, 'feature/a');
+  assert.equal(sessionLogs[0].trackedLocAdded, 2);
+  assert.equal(sessionLogs[0].trackedLocDeleted, 2);
+  assert.equal(sessionLogs[0].untrackedLocAdded, 5);
+  assert.equal(sessionLogs[0].untrackedLocDeleted, 0);
+  assert.equal(sessionLogs[0].locAdded, 7);
+  assert.equal(sessionLogs[0].locDeleted, 2);
+});
+
+test('counts diff only for touched files and ignores unrelated repo changes', async () => {
+  const clock = createClock(1_000);
+  const sessionLogs = [];
+  const touchedFile = 'F:/repo-a/src/app.js';
+  let touchedReads = 0;
+  const tracker = createTimeTracker({
+    debounceMs: 120_000,
+    now: clock.now,
+    getDiff: (repoPath, options = {}) => {
+      assert.equal(repoPath, 'F:/repo-a');
+      assert.deepEqual(options.files, [touchedFile]);
+      touchedReads += 1;
+      if (touchedReads === 1) {
+        return {
+          tracked: {
+            insertions: 1,
+            deletions: 0,
+            byFileType: { js: { insertions: 1, deletions: 0 } }
+          },
+          untracked: { insertions: 0, deletions: 0, byFileType: {} },
+          insertions: 1,
+          deletions: 0,
+          byFileType: { js: { insertions: 1, deletions: 0 } }
+        };
+      }
+      return {
+        tracked: {
+          insertions: 3,
+          deletions: 1,
+          byFileType: { js: { insertions: 3, deletions: 1 } }
+        },
+        untracked: { insertions: 0, deletions: 0, byFileType: {} },
+        insertions: 3,
+        deletions: 1,
+        byFileType: { js: { insertions: 3, deletions: 1 } }
+      };
+    },
+    onSessionFinalized: (session) => sessionLogs.push(session)
+  });
+
+  await tracker.recordActivity('F:/repo-a', touchedFile);
+  clock.advance(10_000);
+  await tracker.flushAll();
+
+  assert.equal(sessionLogs.length, 1);
+  assert.equal(sessionLogs[0].locAdded, 2);
+  assert.equal(sessionLogs[0].locDeleted, 1);
+});
+
+test('counts untracked file delta across sessions instead of whole file repeatedly', async () => {
+  const clock = createClock(1_000);
+  const sessionLogs = [];
+  const touchedFile = 'F:/repo-a/docs/note.md';
+  let lineCount = 10;
+  const tracker = createTimeTracker({
+    debounceMs: 120_000,
+    now: clock.now,
+    isUntrackedFile: () => true,
+    getDiff: (repoPath, options = {}) => {
+      assert.equal(repoPath, 'F:/repo-a');
+      assert.deepEqual(options.files, [touchedFile]);
+      return {
+        tracked: { insertions: 0, deletions: 0, byFileType: {} },
+        untracked: {
+          insertions: lineCount,
+          deletions: 0,
+          byFileType: { md: { insertions: lineCount, deletions: 0 } }
+        },
+        insertions: lineCount,
+        deletions: 0,
+        byFileType: { md: { insertions: lineCount, deletions: 0 } }
+      };
+    },
+    onSessionFinalized: (session) => sessionLogs.push(session)
+  });
+
+  await tracker.recordActivity('F:/repo-a', touchedFile);
+  clock.advance(5_000);
+  await tracker.flushAll();
+
+  lineCount = 12;
+  await tracker.recordActivity('F:/repo-a', touchedFile);
+  clock.advance(5_000);
+  await tracker.flushAll();
+
+  assert.equal(sessionLogs.length, 2);
+  assert.equal(sessionLogs[0].untrackedLocAdded, 10);
+  assert.equal(sessionLogs[1].untrackedLocAdded, 2);
+});
