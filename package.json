@@ -2,7 +2,7 @@
   "name": "minimalist-dev-tracker",
   "displayName": "Minimalist Dev Tracker",
   "description": "Privacy-first local coding activity tracker",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -24,6 +24,10 @@
       {
         "command": "minimalTracker.openDailyReport",
         "title": "Minimal Tracker: Open Daily Report"
+      },
+      {
+        "command": "minimalTracker.migrateLegacyStorageData",
+        "title": "Minimal Tracker: Migrate Legacy Data to Shared Storage"
       }
     ],
     "configuration": {
@@ -49,6 +53,11 @@
           "type": "boolean",
           "default": true,
           "description": "Flush active tracking sessions before opening daily report"
+        },
+        "minimalTracker.sharedStoragePath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute directory path for shared tracker data across IDEs. Leave empty to use default shared path in user home (~/.minimalist-dev-tracker)."
         }
       }
     }
