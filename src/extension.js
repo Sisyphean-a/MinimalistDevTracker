@@ -12,11 +12,12 @@ const { createRuntimeTracker } = require('./core/runtimeTracker');
 const { createGitClient } = require('./core/gitClient');
 const { createPathNormalizer } = require('./core/pathKey');
 const { createFileActivityWatcher } = require('./core/fileActivityWatcher');
-const { createTrackedRuntimeReloader } = require('./core/extensionRuntime');
+const { createTrackedRuntimeReloader, createStorageBootstrapper } = require('./core/extensionRuntime');
 const { resolveReportRepoPaths } = require('./core/reportScope');
 const { resolveStorageRootPath } = require('./core/storagePathResolver');
 const { migrateLegacyStorageData } = require('./core/storageMigration');
 const { registerExtensionCommands } = require('./core/extensionCommands');
+const { openDatabase } = require('./core/sqliteDatabase');
 const { renderDailyReportHtml } = require('./ui/dailyReportView');
 
 const REPORT_VIEW_TYPE = 'minimalTracker.dailyReport';
@@ -242,7 +243,19 @@ async function activate(context) {
     defaultSharedStoragePath
   });
   const legacyStoragePath = context.globalStorageUri.fsPath;
-  const storage = createStorage(storageRootPath);
+  const bootstrapStorage = createStorageBootstrapper({
+    storageRootPath,
+    legacyStoragePath,
+    readLegacyImportCompletedAt: async () => {
+      const database = await openDatabase(path.join(storageRootPath, 'storage.db'));
+      const value = database.getMeta('legacy_import_completed_at');
+      database.close();
+      return value;
+    },
+    migrateLegacyStorageData,
+    createStorage
+  });
+  const storage = await bootstrapStorage();
   const gitDiffProvider = createGitDiffProvider(vscode, { gitClient, normalizer });
   const tracker = createTracker(storage, gitDiffProvider);
   const reportPanelController = createReportPanelController(context, {

@@ -16,7 +16,7 @@ function registerExtensionCommands(options) {
       sourceDir: legacyStoragePath,
       targetDir: storageRootPath
     });
-    const message = `迁移完成：复制 ${summary.copiedFiles} 个文件，跳过 ${summary.skippedFiles} 个已存在文件。`;
+    const message = `迁移完成：导入 ${summary.importedSessions} 条会话，跳过 ${summary.skippedSessions} 条无效会话，忽略 ${summary.ignoredExistingSessions} 条已存在会话。`;
     await vscode.window.showInformationMessage(message);
   });
   context.subscriptions.push(reportCommand, migrationCommand);
@@ -25,4 +25,3 @@ function registerExtensionCommands(options) {
 module.exports = {
   registerExtensionCommands
 };
-

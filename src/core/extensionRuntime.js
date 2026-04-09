@@ -32,7 +32,21 @@ function createTrackedRuntimeReloader(options) {
   };
 }
 
+function createStorageBootstrapper(options) {
+  return async function bootstrapStorage() {
+    const importCompletedAt = await options.readLegacyImportCompletedAt();
+    if (!importCompletedAt) {
+      await options.migrateLegacyStorageData({
+        sourceDir: options.legacyStoragePath,
+        targetDir: options.storageRootPath
+      });
+    }
+    return options.createStorage(options.storageRootPath);
+  };
+}
+
 module.exports = {
   createOpenDailyReportHandler,
-  createTrackedRuntimeReloader
+  createTrackedRuntimeReloader,
+  createStorageBootstrapper
 };

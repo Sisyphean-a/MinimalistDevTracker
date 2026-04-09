@@ -10,7 +10,7 @@ require('./extension.reportFlush.test');
 require('./extension.configReload.test');
 
 require('./dateKey.test');
-require('./storageWriter.test');
+require('./sqliteDatabase.test');
 require('./pathKey.test');
 require('./gitClient.test');
 require('./gitDiffProvider.test');
@@ -19,4 +19,5 @@ require('./dailyReportView.test');
 require('./reportScope.test');
 require('./storagePathResolver.test');
 require('./storageMigration.test');
+require('./extension.storageBootstrap.test');
 

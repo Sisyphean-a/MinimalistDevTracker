@@ -1,13 +1,14 @@
 # Minimalist Dev Tracker
 
-A privacy-first VS Code extension that tracks local coding activity by repository and renders a daily report from local JSON data.
+A privacy-first VS Code extension that tracks local coding activity by repository and renders a daily report from local SQLite data.
 
 ## Features
 
 - Tracks activity under configured `minimalTracker.trackedPaths`
 - Includes both editor events and file system events
 - Splits sessions on commit and records LOC changes
-- Stores data locally in VS Code global storage
+- Stores runtime data in a local SQLite database under the resolved storage root
+- Automatically migrates existing legacy JSON session files into SQLite
 - Opens a built-in daily report webview
 
 ## Configuration

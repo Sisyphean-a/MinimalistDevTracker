@@ -65,5 +65,8 @@
   "scripts": {
     "test": "node test/run-tests.js",
     "compile": "echo compile-skipped"
+  },
+  "dependencies": {
+    "sql.js": "^1.14.1"
   }
 }
