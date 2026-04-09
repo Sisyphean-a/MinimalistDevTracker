@@ -1,12 +1,9 @@
-const { toLocalDateKey } = require('../core/dateKey');
-
-const MIN_BAR_PERCENT = 4;
-const MAX_FILE_TYPE_CHANGES = 8;
-const HEAT_COLORS = ['#edf5f2', '#d9ece4', '#a8d9c4', '#5ab89c', '#0f7b62'];
+const RECENT_SESSION_LIMIT = 20;
 const REPORT_PERIOD_OPTIONS = [
   { value: 'rolling30', label: '最近30天' },
   { value: 'month', label: '本月' }
 ];
+const HEATLINE_COLORS = ['#edf3f1', '#d4e8df', '#8ecdb6', '#2fa17f', '#0f7b62'];
 
 function escapeHtml(value) {
   return String(value)
@@ -18,7 +15,7 @@ function escapeHtml(value) {
 }
 
 function formatDuration(durationMs) {
-  const totalSeconds = Math.floor(durationMs / 1000);
+  const totalSeconds = Math.floor((durationMs ?? 0) / 1000);
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
@@ -36,11 +33,15 @@ function formatTime(timestamp) {
   return `${hh}:${mm}:${ss}`;
 }
 
-function formatDurationSeconds(durationMs) {
-  if ((durationMs ?? 0) <= 0) {
-    return '0秒';
+function formatDateTime(timestamp) {
+  if (!timestamp) {
+    return '-';
   }
-  return `${Math.max(1, Math.ceil(durationMs / 1000))}秒`;
+  const date = new Date(timestamp);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${formatTime(timestamp)}`;
 }
 
 function parseProjectKey(projectKey) {
@@ -71,7 +72,10 @@ function normalizeProject(projectKey, project) {
 function toProjectList(projects) {
   return Object.entries(projects ?? {})
     .map(([projectKey, project]) => normalizeProject(projectKey, project))
-    .filter((project) => (project.totalLocAdded + project.totalLocDeleted) > 0 || project.sessions.some((s) => ((s.locAdded ?? 0) + (s.locDeleted ?? 0)) > 0));
+    .filter((project) => {
+      return (project.totalLocAdded + project.totalLocDeleted) > 0
+        || project.sessions.some((session) => ((session.locAdded ?? 0) + (session.locDeleted ?? 0)) > 0);
+    });
 }
 
 function mergeByFileType(output, locByFileType) {
@@ -114,30 +118,6 @@ function aggregateByFileType(projects) {
     mergeByFileType(output, project.locByFileType);
   });
   return output;
-}
-
-function buildDayBuckets(projects) {
-  const bucketMap = new Map();
-  projects.forEach((project) => {
-    project.sessions.forEach((session) => {
-      if (session.startTime === null || session.startTime === undefined) {
-        return;
-      }
-      const start = new Date(session.startTime);
-      const durationMs = session.durationMs ?? 0;
-      if (Number.isNaN(start.getTime()) || durationMs <= 0) {
-        return;
-      }
-      const dayKey = toLocalDateKey(start.getTime());
-      const existing = bucketMap.get(dayKey) ?? { day: dayKey, durationMs: 0, sessions: 0 };
-      bucketMap.set(dayKey, {
-        day: dayKey,
-        durationMs: existing.durationMs + durationMs,
-        sessions: existing.sessions + 1
-      });
-    });
-  });
-  return [...bucketMap.values()].sort((left, right) => left.day.localeCompare(right.day));
 }
 
 function renderSummaryCards(summary) {
@@ -194,38 +174,6 @@ function renderFileTypeRows(fileTypeStats) {
     .join('');
 }
 
-function renderDayBarRows(dayBuckets) {
-  const maxDurationMs = dayBuckets.reduce((maxValue, bucket) => Math.max(maxValue, bucket.durationMs), 0);
-  return dayBuckets
-    .map((bucket) => {
-      const ratio = maxDurationMs === 0 ? 0 : (bucket.durationMs / maxDurationMs);
-      const percent = Math.min(100, Math.max(MIN_BAR_PERCENT, Math.round(ratio * 100)));
-      return [
-        '<div class="day-bar-row">',
-        `<div class="day-bar-day">${escapeHtml(bucket.day)}</div>`,
-        `<div class="day-bar-duration">${escapeHtml(formatDuration(bucket.durationMs))}</div>`,
-        '<div class="day-bar-track">',
-        `<div class="day-bar-fill" style="width:${escapeHtml(percent)}%"></div>`,
-        '</div>',
-        `<div class="day-bar-count">${escapeHtml(bucket.sessions)} 会话</div>`,
-        '</div>'
-      ].join('');
-    })
-    .join('');
-}
-
-function getHeatColor(ratio) {
-  if (ratio <= 0) {
-    return HEAT_COLORS[0];
-  }
-  const index = Math.min(HEAT_COLORS.length - 1, Math.floor(ratio * HEAT_COLORS.length));
-  return HEAT_COLORS[index];
-}
-
-function formatShare(value) {
-  return `${(value * 100).toFixed(1)}%`;
-}
-
 function renderPeriodSelector(periodType) {
   const options = REPORT_PERIOD_OPTIONS.map((option) => {
     const selected = option.value === periodType ? ' selected' : '';
@@ -239,108 +187,78 @@ function renderPeriodSelector(periodType) {
   ].join('');
 }
 
-function renderHeatLineSection(days) {
+function getHeatlineColor(ratio) {
+  if (ratio <= 0) {
+    return HEATLINE_COLORS[0];
+  }
+  const index = Math.min(HEATLINE_COLORS.length - 1, Math.floor(ratio * HEATLINE_COLORS.length));
+  return HEATLINE_COLORS[index];
+}
+
+function buildHeatlineGradient(days) {
+  const maxDurationMs = days.reduce((maxValue, day) => Math.max(maxValue, day.totalActiveTimeMs ?? 0), 0);
+  const totalDays = days.length;
+  const stops = days.flatMap((day, index) => {
+    const start = ((index / totalDays) * 100).toFixed(2);
+    const end = (((index + 1) / totalDays) * 100).toFixed(2);
+    const durationMs = day.totalActiveTimeMs ?? 0;
+    const ratio = maxDurationMs === 0 ? 0 : durationMs / maxDurationMs;
+    const color = getHeatlineColor(ratio);
+    return [`${color} ${start}%`, `${color} ${end}%`];
+  });
+  return `linear-gradient(90deg, ${stops.join(', ')})`;
+}
+
+function renderHeatLineSection(days, dateRangeStart, dateRangeEnd) {
   if (!Array.isArray(days) || days.length === 0) {
     return '';
   }
-  const maxDurationMs = days.reduce((maxValue, day) => Math.max(maxValue, day.totalActiveTimeMs ?? 0), 0);
-  const cells = days.map((day) => {
-    const durationMs = day.totalActiveTimeMs ?? 0;
-    const ratio = maxDurationMs === 0 ? 0 : durationMs / maxDurationMs;
-    const background = getHeatColor(ratio);
-    const seconds = formatDurationSeconds(durationMs);
-    return [
-      '<div class="heat-cell">',
-      `<div class="heat-date">${escapeHtml(day.date)}</div>`,
-      `<div class="heat-time" style="background:${escapeHtml(background)}">${escapeHtml(seconds)}</div>`,
-      '</div>'
-    ].join('');
-  }).join('');
+
   return [
     '<section class="panel"><h3>整体热力线</h3>',
-    '<div class="heat-strip">',
-    cells,
+    '<p class="muted">活跃趋势</p>',
+    '<div class="heatline-labels">',
+    `<span>${escapeHtml(dateRangeStart ?? days[0]?.date ?? '')}</span>`,
+    `<span>${escapeHtml(dateRangeEnd ?? days[days.length - 1]?.date ?? '')}</span>`,
     '</div>',
+    `<div class="heatline-track" style="background:${escapeHtml(buildHeatlineGradient(days))}"></div>`,
     '</section>'
   ].join('');
 }
 
-function buildTrendBarRows(days, maxValue, valueKey) {
+function getActiveDays(days) {
+  if (!Array.isArray(days)) {
+    return [];
+  }
+  return days
+    .filter((day) => ((day.totalActiveTimeMs ?? 0) > 0) || ((day.totalLoc ?? ((day.totalLocAdded ?? 0) + (day.totalLocDeleted ?? 0))) > 0))
+    .sort((left, right) => right.date.localeCompare(left.date));
+}
+
+function renderActiveDayRows(days) {
   return days.map((day) => {
-    const value = day[valueKey] ?? 0;
-    const ratio = maxValue === 0 ? 0 : value / maxValue;
-    const percent = Math.min(100, Math.max(MIN_BAR_PERCENT, Math.round(ratio * 100)));
+    const totalLoc = day.totalLoc ?? ((day.totalLocAdded ?? 0) + (day.totalLocDeleted ?? 0));
     return [
-      '<div class="trend-row">',
-      `<div class="trend-date">${escapeHtml(day.date)}</div>`,
-      '<div class="trend-track">',
-      `<div class="trend-fill" style="width:${escapeHtml(percent)}%"></div>`,
-      '</div>',
-      `<div class="trend-value">${escapeHtml(String(value))}</div>`,
-      '</div>'
+      '<tr>',
+      `<td>${escapeHtml(day.date)}</td>`,
+      `<td>${escapeHtml(formatDuration(day.totalActiveTimeMs ?? 0))}</td>`,
+      `<td>${escapeHtml(totalLoc)}</td>`,
+      '</tr>'
     ].join('');
   }).join('');
 }
 
-function renderTrendFileTypeChanges(fileTypeChanges) {
-  if (!Array.isArray(fileTypeChanges) || fileTypeChanges.length === 0) {
-    return '';
-  }
-  const rows = fileTypeChanges
-    .slice(0, MAX_FILE_TYPE_CHANGES)
-    .map((item) => {
-      const deltaClass = item.deltaShare >= 0 ? 'trend-up' : 'trend-down';
-      return [
-        '<tr>',
-        `<td>${escapeHtml(item.fileType)}</td>`,
-        `<td>${escapeHtml(item.currentTotalLoc)}</td>`,
-        `<td>${escapeHtml(formatShare(item.currentShare))}</td>`,
-        `<td>${escapeHtml(formatShare(item.previousShare))}</td>`,
-        `<td class="${deltaClass}">${escapeHtml(formatShare(item.deltaShare))}</td>`,
-        '</tr>'
-      ].join('');
-    })
-    .join('');
-  return [
-    '<div class="trend-filetype"><h4>文件类型分布变化</h4>',
-    '<table><thead><tr><th>类型</th><th>当前总变更行</th><th>当前占比</th><th>上一窗口占比</th><th>变化</th></tr></thead>',
-    `<tbody>${rows}</tbody></table></div>`
-  ].join('');
-}
+function renderActiveDaysSection(days) {
+  const activeDays = getActiveDays(days);
+  const rows = activeDays.length > 0
+    ? renderActiveDayRows(activeDays)
+    : '<tr><td colspan="3">当前范围内暂无活跃日期数据</td></tr>';
 
-function renderTrendWindowPanel(windowDays, windowData) {
-  if (!windowData || !Array.isArray(windowData.days) || windowData.days.length === 0) {
-    return '';
-  }
-  const maxActive = windowData.days.reduce((maxValue, day) => Math.max(maxValue, day.totalActiveTimeMs ?? 0), 0);
-  const maxLoc = windowData.days.reduce((maxValue, day) => Math.max(maxValue, day.totalLoc ?? 0), 0);
-  const activeRows = buildTrendBarRows(windowData.days, maxActive, 'totalActiveTimeMs');
-  const locRows = buildTrendBarRows(windowData.days, maxLoc, 'totalLoc');
-  const fileTypeSection = renderTrendFileTypeChanges(windowData.fileTypeChanges);
   return [
-    `<section class="panel"><h3>近${escapeHtml(windowDays)}天趋势</h3>`,
-    '<div class="trend-grid">',
-    '<div><h4>趋势活跃时长</h4>',
-    `<p class="muted">总计 ${escapeHtml(formatDuration(windowData.totals?.totalActiveTimeMs ?? 0))}</p>`,
-    `<div class="trend-bars">${activeRows}</div></div>`,
-    '<div><h4>趋势总变更行</h4>',
-    `<p class="muted">+${escapeHtml(windowData.totals?.totalLocAdded ?? 0)} / -${escapeHtml(windowData.totals?.totalLocDeleted ?? 0)} / ${escapeHtml(windowData.totals?.totalLoc ?? 0)}</p>`,
-    `<div class="trend-bars">${locRows}</div></div>`,
-    '</div>',
-    fileTypeSection,
-    '</section>'
+    '<section class="panel"><h3>有值日期统计</h3>',
+    '<table><thead><tr><th>日期</th><th>总时长</th><th>总行数</th></tr></thead>',
+    `<tbody>${rows}</tbody></table></section>`
   ].join('');
-}
-
-function renderTrendPanels(trendData) {
-  if (!trendData?.windows || typeof trendData.windows !== 'object') {
-    return '';
-  }
-  const windows = Object.entries(trendData.windows)
-    .sort((left, right) => Number(left[0]) - Number(right[0]));
-  return windows
-    .map(([windowDays, windowData]) => renderTrendWindowPanel(windowDays, windowData))
-    .join('');
 }
 
 function flattenSessions(projects) {
@@ -366,16 +284,16 @@ function flattenSessions(projects) {
 }
 
 function renderSessionRows(projects) {
-  const sessions = flattenSessions(projects).slice(0, 120);
+  const sessions = flattenSessions(projects).slice(0, RECENT_SESSION_LIMIT);
   return sessions.map((session) => {
     const totalLoc = session.locAdded + session.locDeleted;
     return [
       '<tr>',
       `<td>${escapeHtml(session.repoPath)}</td>`,
       `<td>${escapeHtml(session.branch)}</td>`,
-      `<td>${escapeHtml(formatTime(session.startTime))}</td>`,
-      `<td>${escapeHtml(formatTime(session.endTime))}</td>`,
-      `<td>${escapeHtml(formatDurationSeconds(session.durationMs))}</td>`,
+      `<td>${escapeHtml(formatDateTime(session.startTime))}</td>`,
+      `<td>${escapeHtml(formatDateTime(session.endTime))}</td>`,
+      `<td>${escapeHtml(formatDuration(session.durationMs))}</td>`,
       `<td>+${escapeHtml(session.trackedLocAdded)} / -${escapeHtml(session.trackedLocDeleted)}</td>`,
       `<td>+${escapeHtml(session.untrackedLocAdded)} / -${escapeHtml(session.untrackedLocDeleted)}</td>`,
       `<td>${escapeHtml(totalLoc)}</td>`,
@@ -414,11 +332,13 @@ function renderDailyReportHtml(dailyData, options = {}) {
   if (projects.length === 0) {
     return renderEmptyHtml();
   }
+
   const summary = aggregateSummary(projects);
   const fileTypeStats = aggregateByFileType(projects);
   const projectRows = renderProjectRows(projects);
   const fileTypeRows = renderFileTypeRows(fileTypeStats);
-  const heatLineSection = renderHeatLineSection(dailyData.days);
+  const heatLineSection = renderHeatLineSection(dailyData.days, dailyData.dateRangeStart, dailyData.dateRangeEnd);
+  const activeDaysSection = renderActiveDaysSection(dailyData.days);
   const sessionRows = renderSessionRows(projects);
   const rangeLabel = dailyData.dateRangeStart && dailyData.dateRangeEnd
     ? `${escapeHtml(dailyData.dateRangeStart)} ~ ${escapeHtml(dailyData.dateRangeEnd)}`
@@ -427,7 +347,7 @@ function renderDailyReportHtml(dailyData, options = {}) {
   return [
     '<html>',
     '<head><meta charset="utf-8"><style>',
-    ':root{--bg:#f6f7f3;--panel:#ffffff;--line:#d7ddd4;--text:#1d3430;--muted:#5a6f69;--accent:#0f7b62;}',
+    ':root{--panel:#ffffff;--line:#d7ddd4;--text:#1d3430;--muted:#5a6f69;--accent:#0f7b62;}',
     'body{margin:0;background:linear-gradient(180deg,#e8f3ef,#f6f7f3);font-family:"Segoe UI",Arial,sans-serif;color:var(--text);padding:16px;}',
     '.header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;}',
     '.title{font-size:30px;font-weight:700;margin:0;}',
@@ -444,20 +364,8 @@ function renderDailyReportHtml(dailyData, options = {}) {
     'table{width:100%;border-collapse:collapse;}',
     'th,td{border:1px solid var(--line);padding:8px;text-align:left;font-size:13px;}',
     'th{background:#eef3f2;}',
-    '.heat-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(82px,1fr));gap:8px;}',
-    '.heat-cell{display:flex;flex-direction:column;gap:6px;}',
-    '.heat-date{font-size:12px;color:var(--muted);}',
-    '.heat-time{min-height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#16302c;border:1px solid rgba(15,123,98,0.08);}',
-    '.trend-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;}',
-    '.trend-bars{display:flex;flex-direction:column;gap:6px;}',
-    '.trend-row{display:grid;grid-template-columns:96px 1fr 80px;align-items:center;gap:8px;}',
-    '.trend-date,.trend-value{font-size:12px;color:var(--muted);}',
-    '.trend-track{height:10px;background:#e8efed;border-radius:999px;overflow:hidden;}',
-    '.trend-fill{height:100%;background:linear-gradient(90deg,#66b89f,#0f7b62);border-radius:999px;}',
-    '.trend-filetype{margin-top:10px;}',
-    '.trend-filetype h4{margin:0 0 8px 0;}',
-    '.trend-up{color:#117a37;font-weight:700;}',
-    '.trend-down{color:#b83a3a;font-weight:700;}',
+    '.heatline-labels{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);margin-bottom:10px;}',
+    '.heatline-track{height:28px;border-radius:999px;border:1px solid rgba(15,123,98,0.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.25);}',
     '</style></head>',
     '<body>',
     '<div class="header">',
@@ -466,14 +374,15 @@ function renderDailyReportHtml(dailyData, options = {}) {
     '</div>',
     `<p class="muted">自动刷新间隔：${escapeHtml(Math.floor(refreshIntervalMs / 1000))} 秒</p>`,
     renderSummaryCards(summary),
+    heatLineSection,
+    activeDaysSection,
     '<section class="panel"><h3>仓库 + 分支统计</h3>',
     '<table><thead><tr><th>仓库</th><th>分支</th><th>活跃时长</th><th>已跟踪变更</th><th>未跟踪新文件</th><th>总变更行</th><th>会话数</th></tr></thead>',
     `<tbody>${projectRows}</tbody></table></section>`,
     '<section class="panel"><h3>按文件类型统计</h3>',
     '<table><thead><tr><th>文件类型</th><th>新增代码行</th><th>删除代码行</th><th>总变更行</th></tr></thead>',
     `<tbody>${fileTypeRows || '<tr><td colspan="4">暂无按类型统计数据</td></tr>'}</tbody></table></section>`,
-    heatLineSection,
-    '<section class="panel"><h3>会话明细</h3>',
+    '<section class="panel"><h3>最近会话</h3>',
     '<table><thead><tr><th>仓库</th><th>分支</th><th>开始</th><th>结束</th><th>时长</th><th>已跟踪变更</th><th>未跟踪新文件</th><th>总变更行</th></tr></thead>',
     `<tbody>${sessionRows || '<tr><td colspan="8">暂无会话数据</td></tr>'}</tbody></table></section>`,
     createRefreshScript(refreshIntervalMs),
