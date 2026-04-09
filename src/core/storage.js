@@ -6,6 +6,10 @@ const { createStorageWriter } = require('./storageWriter');
 
 const TREND_INDEX_FILE = 'trend-index.json';
 const TREND_INDEX_VERSION = 1;
+const REPORT_PERIOD_LABELS = {
+  rolling30: '最近30天',
+  month: '本月'
+};
 
 function toDateKey(timestamp) {
   return toLocalDateKey(timestamp);
@@ -235,11 +239,174 @@ function buildDayRecord(byDate, dateKey) {
   };
 }
 
+function normalizeReportPeriod(periodType) {
+  return periodType === 'month' ? 'month' : 'rolling30';
+}
+
+function buildReportPeriodStartDateKey(periodType, todayDateKey) {
+  if (periodType === 'month') {
+    const start = parseDateKey(todayDateKey);
+    start.setDate(1);
+    return toDateKey(start.getTime());
+  }
+  return addDaysToDateKey(todayDateKey, -29);
+}
+
+function buildReportDateRange(periodType, todayDateKey) {
+  const startDateKey = buildReportPeriodStartDateKey(periodType, todayDateKey);
+  const dates = [];
+  let current = startDateKey;
+  while (current <= todayDateKey) {
+    dates.push(current);
+    if (current === todayDateKey) {
+      break;
+    }
+    current = addDaysToDateKey(current, 1);
+  }
+  return dates;
+}
+
+function mergeProjectRecord(target, project) {
+  const nextSessions = target.sessions.concat(project.sessions ?? []);
+  return {
+    repoPath: target.repoPath || project.repoPath,
+    branch: target.branch || project.branch || 'unknown',
+    totalActiveTimeMs: target.totalActiveTimeMs + (project.totalActiveTimeMs ?? 0),
+    trackedLocAdded: target.trackedLocAdded + (project.trackedLocAdded ?? project.totalLocAdded ?? 0),
+    trackedLocDeleted: target.trackedLocDeleted + (project.trackedLocDeleted ?? project.totalLocDeleted ?? 0),
+    untrackedLocAdded: target.untrackedLocAdded + (project.untrackedLocAdded ?? 0),
+    untrackedLocDeleted: target.untrackedLocDeleted + (project.untrackedLocDeleted ?? 0),
+    totalLocAdded: target.totalLocAdded + (project.totalLocAdded ?? 0),
+    totalLocDeleted: target.totalLocDeleted + (project.totalLocDeleted ?? 0),
+    trackedLocByFileType: mergeLocByFileType(target.trackedLocByFileType, project.trackedLocByFileType ?? project.locByFileType),
+    untrackedLocByFileType: mergeLocByFileType(target.untrackedLocByFileType, project.untrackedLocByFileType),
+    locByFileType: mergeLocByFileType(target.locByFileType, project.locByFileType),
+    sessions: nextSessions
+  };
+}
+
+function emptyReportProjectRecord(project) {
+  return {
+    repoPath: project.repoPath,
+    branch: project.branch,
+    totalActiveTimeMs: 0,
+    trackedLocAdded: 0,
+    trackedLocDeleted: 0,
+    untrackedLocAdded: 0,
+    untrackedLocDeleted: 0,
+    totalLocAdded: 0,
+    totalLocDeleted: 0,
+    trackedLocByFileType: {},
+    untrackedLocByFileType: {},
+    locByFileType: {},
+    sessions: []
+  };
+}
+
 function aggregateFileTypes(byDate, dates) {
   return dates.reduce((output, dateKey) => {
     const day = byDate[dateKey];
     return mergeLocByFileType(output, day?.locByFileType);
   }, {});
+}
+
+function buildReportSummary(projects) {
+  return projects.reduce((acc, project) => {
+    return {
+      totalActiveTimeMs: acc.totalActiveTimeMs + project.totalActiveTimeMs,
+      trackedLocAdded: acc.trackedLocAdded + project.trackedLocAdded,
+      trackedLocDeleted: acc.trackedLocDeleted + project.trackedLocDeleted,
+      untrackedLocAdded: acc.untrackedLocAdded + project.untrackedLocAdded,
+      untrackedLocDeleted: acc.untrackedLocDeleted + project.untrackedLocDeleted,
+      totalLocAdded: acc.totalLocAdded + project.totalLocAdded,
+      totalLocDeleted: acc.totalLocDeleted + project.totalLocDeleted,
+      sessionCount: acc.sessionCount + project.sessions.length
+    };
+  }, {
+    totalActiveTimeMs: 0,
+    trackedLocAdded: 0,
+    trackedLocDeleted: 0,
+    untrackedLocAdded: 0,
+    untrackedLocDeleted: 0,
+    totalLocAdded: 0,
+    totalLocDeleted: 0,
+    sessionCount: 0
+  });
+}
+
+async function readReportDataFromDailyFiles(globalStoragePath, periodType, repoPaths, todayDateKey) {
+  const dateRange = buildReportDateRange(periodType, todayDateKey);
+  const dateSet = new Set(dateRange);
+  const dayMap = new Map(dateRange.map((dateKey) => [dateKey, buildDayRecord({}, dateKey)]));
+  const projectMap = new Map();
+  try {
+    const files = await fs.readdir(globalStoragePath);
+    const sorted = sortDailyFiles(files);
+    for (const fileName of sorted) {
+      const dateKey = fileName.slice(0, -5);
+      if (!dateSet.has(dateKey)) {
+        continue;
+      }
+      const daily = await readJson(path.join(globalStoragePath, fileName));
+      const filtered = filterDailyDataByRepoPaths(daily, repoPaths);
+      if (!filtered) {
+        continue;
+      }
+      const projects = Object.values(filtered.projects);
+      const dayTotals = projects.reduce((acc, project) => {
+        return {
+          totalActiveTimeMs: acc.totalActiveTimeMs + (project.totalActiveTimeMs ?? 0),
+          totalLocAdded: acc.totalLocAdded + (project.totalLocAdded ?? 0),
+          totalLocDeleted: acc.totalLocDeleted + (project.totalLocDeleted ?? 0)
+        };
+      }, {
+        totalActiveTimeMs: 0,
+        totalLocAdded: 0,
+        totalLocDeleted: 0
+      });
+      dayMap.set(dateKey, {
+        date: dateKey,
+        totalActiveTimeMs: dayTotals.totalActiveTimeMs,
+        totalLocAdded: dayTotals.totalLocAdded,
+        totalLocDeleted: dayTotals.totalLocDeleted,
+        totalLoc: dayTotals.totalLocAdded + dayTotals.totalLocDeleted
+      });
+      projects.forEach((project) => {
+        const projectKey = buildProjectKey(project.repoPath, project.branch);
+        const existing = projectMap.get(projectKey) ?? emptyReportProjectRecord(project);
+        projectMap.set(projectKey, mergeProjectRecord(existing, normalizeProjectRecord(projectKey, project)));
+      });
+    }
+    return {
+      periodType,
+      periodLabel: REPORT_PERIOD_LABELS[periodType] ?? REPORT_PERIOD_LABELS.rolling30,
+      dateRangeStart: dateRange[0] ?? todayDateKey,
+      dateRangeEnd: dateRange[dateRange.length - 1] ?? todayDateKey,
+      days: dateRange.map((dateKey) => dayMap.get(dateKey) ?? buildDayRecord({}, dateKey)),
+      projects: Object.fromEntries(projectMap.entries()),
+      ...buildReportSummary([...projectMap.values()])
+    };
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return {
+        periodType,
+        periodLabel: REPORT_PERIOD_LABELS[periodType] ?? REPORT_PERIOD_LABELS.rolling30,
+        dateRangeStart: dateRange[0] ?? todayDateKey,
+        dateRangeEnd: dateRange[dateRange.length - 1] ?? todayDateKey,
+        days: dateRange.map((dateKey) => buildDayRecord({}, dateKey)),
+        projects: {},
+        totalActiveTimeMs: 0,
+        trackedLocAdded: 0,
+        trackedLocDeleted: 0,
+        untrackedLocAdded: 0,
+        untrackedLocDeleted: 0,
+        totalLocAdded: 0,
+        totalLocDeleted: 0,
+        sessionCount: 0
+      };
+    }
+    throw error;
+  }
 }
 
 function computeFileTypeChanges(currentFileTypes, previousFileTypes) {
@@ -312,6 +479,13 @@ function normalizeTrendRequest(input) {
   }
   return {
     windows: input?.windows ?? [7, 30],
+    repoPaths: input?.repoPaths ?? null
+  };
+}
+
+function normalizeReportRequest(input) {
+  return {
+    periodType: input?.periodType ?? input?.rangeType ?? input?.period ?? 'rolling30',
     repoPaths: input?.repoPaths ?? null
   };
 }
@@ -454,10 +628,21 @@ function createStorage(globalStoragePath, options = {}) {
     };
   }
 
+  async function readReportData(input = {}) {
+    const request = normalizeReportRequest(input);
+    const periodType = normalizeReportPeriod(request.periodType);
+    const todayDateKey = toDateKey(now());
+    if (request.repoPaths) {
+      return readReportDataFromDailyFiles(globalStoragePath, periodType, request.repoPaths, todayDateKey);
+    }
+    return readReportDataFromDailyFiles(globalStoragePath, periodType, null, todayDateKey);
+  }
+
   return Object.freeze({
     appendSession,
     readLatestDaily,
-    readTrendData
+    readTrendData,
+    readReportData
   });
 }
 

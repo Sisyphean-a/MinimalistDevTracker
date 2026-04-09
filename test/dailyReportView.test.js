@@ -5,7 +5,10 @@ const { renderDailyReportHtml } = require('../src/ui/dailyReportView');
 
 test('renderDailyReportHtml includes project rows and totals', () => {
   const html = renderDailyReportHtml({
-    date: '2026-03-12',
+    periodType: 'rolling30',
+    periodLabel: '最近30天',
+    dateRangeStart: '2026-03-01',
+    dateRangeEnd: '2026-03-12',
     projects: {
       'f:/repo/main||main': {
         repoPath: 'f:/repo/main',
@@ -30,9 +33,13 @@ test('renderDailyReportHtml includes project rows and totals', () => {
           }
         ]
       }
-    }
+    },
+    days: [
+      { date: '2026-03-12', totalActiveTimeMs: 3_600_000, totalLocAdded: 20, totalLocDeleted: 5, totalLoc: 25 }
+    ]
   });
 
+  assert.match(html, /最近30天/);
   assert.match(html, /2026-03-12/);
   assert.match(html, /f:\/repo\/main/);
   assert.match(html, /main/);
@@ -43,11 +50,12 @@ test('renderDailyReportHtml includes project rows and totals', () => {
   assert.match(html, /未跟踪新文件/);
   assert.match(html, /立即刷新/);
   assert.match(html, /按文件类型统计/);
-  assert.match(html, /按天活跃时长对比/);
-  assert.match(html, /day-bar-fill/);
+  assert.match(html, /整体热力线/);
+  assert.match(html, /2026-03-12/);
   assert.match(html, /会话明细/);
   assert.match(html, /js/);
   assert.match(html, /vue/);
+  assert.match(html, /3600秒/);
 });
 
 test('renderDailyReportHtml hides daily bar section when no valid day data', () => {
@@ -79,7 +87,7 @@ test('renderDailyReportHtml hides daily bar section when no valid day data', () 
     }
   });
 
-  assert.doesNotMatch(html, /按天活跃时长对比/);
+  assert.doesNotMatch(html, /整体热力线/);
 });
 
 test('renderDailyReportHtml handles empty data', () => {
@@ -87,9 +95,12 @@ test('renderDailyReportHtml handles empty data', () => {
   assert.match(html, /暂无统计数据/);
 });
 
-test('renderDailyReportHtml renders rolling 7 and 30 day trend panels', () => {
+test('renderDailyReportHtml renders the selected range with a heat line', () => {
   const html = renderDailyReportHtml({
-    date: '2026-03-12',
+    periodType: 'rolling30',
+    periodLabel: '最近30天',
+    dateRangeStart: '2026-03-11',
+    dateRangeEnd: '2026-04-09',
     projects: {
       'f:/repo/main||main': {
         repoPath: 'f:/repo/main',
@@ -104,48 +115,38 @@ test('renderDailyReportHtml renders rolling 7 and 30 day trend panels', () => {
         locByFileType: {
           js: { locAdded: 12, locDeleted: 3 }
         },
-        sessions: []
+        sessions: [
+          {
+            branch: 'main',
+            startTime: Date.parse('2026-04-08T01:00:00.000Z'),
+            endTime: Date.parse('2026-04-08T02:00:00.000Z'),
+            durationMs: 1_500,
+            locAdded: 2,
+            locDeleted: 1
+          }
+        ]
       }
-    }
-  }, {
-    trendData: {
-      generatedAt: Date.parse('2026-03-31T10:00:00.000Z'),
-      windows: {
-        7: {
-          days: [
-            { date: '2026-03-25', totalActiveTimeMs: 0, totalLocAdded: 0, totalLocDeleted: 0, totalLoc: 0 },
-            { date: '2026-03-26', totalActiveTimeMs: 3_600_000, totalLocAdded: 9, totalLocDeleted: 3, totalLoc: 12 }
-          ],
-          totals: { totalActiveTimeMs: 3_600_000, totalLocAdded: 9, totalLocDeleted: 3, totalLoc: 12 },
-          fileTypeChanges: [
-            { fileType: 'js', currentTotalLoc: 12, previousTotalLoc: 4, currentShare: 1, previousShare: 0.4, deltaShare: 0.6 }
-          ]
-        },
-        30: {
-          days: [
-            { date: '2026-03-02', totalActiveTimeMs: 7_200_000, totalLocAdded: 20, totalLocDeleted: 5, totalLoc: 25 }
-          ],
-          totals: { totalActiveTimeMs: 7_200_000, totalLocAdded: 20, totalLocDeleted: 5, totalLoc: 25 },
-          fileTypeChanges: [
-            { fileType: 'ts', currentTotalLoc: 15, previousTotalLoc: 5, currentShare: 0.6, previousShare: 0.2, deltaShare: 0.4 }
-          ]
-        }
-      }
-    }
+    },
+    days: [
+      { date: '2026-03-11', totalActiveTimeMs: 0, totalLocAdded: 0, totalLocDeleted: 0, totalLoc: 0 },
+      { date: '2026-04-08', totalActiveTimeMs: 1_500, totalLocAdded: 2, totalLocDeleted: 1, totalLoc: 3 }
+    ]
   });
 
-  assert.match(html, /近7天趋势/);
-  assert.match(html, /近30天趋势/);
-  assert.match(html, /趋势活跃时长/);
-  assert.match(html, /趋势总变更行/);
-  assert.match(html, /文件类型分布变化/);
-  assert.match(html, /js/);
-  assert.match(html, /ts/);
+  assert.match(html, /最近30天/);
+  assert.match(html, /时间范围/);
+  assert.match(html, /热力线/);
+  assert.match(html, /2秒/);
+  assert.doesNotMatch(html, /近7天趋势/);
+  assert.doesNotMatch(html, /近30天趋势/);
 });
 
-test('renderDailyReportHtml hides file-type change list when trend data is empty', () => {
+test('renderDailyReportHtml hides the heat line when there is no day data', () => {
   const html = renderDailyReportHtml({
-    date: '2026-03-12',
+    periodType: 'month',
+    periodLabel: '本月',
+    dateRangeStart: '2026-04-01',
+    dateRangeEnd: '2026-04-09',
     projects: {
       'f:/repo/main||main': {
         repoPath: 'f:/repo/main',
@@ -162,19 +163,9 @@ test('renderDailyReportHtml hides file-type change list when trend data is empty
         },
         sessions: []
       }
-    }
-  }, {
-    trendData: {
-      generatedAt: Date.parse('2026-03-31T10:00:00.000Z'),
-      windows: {
-        7: {
-          days: [],
-          totals: { totalActiveTimeMs: 0, totalLocAdded: 0, totalLocDeleted: 0, totalLoc: 0 },
-          fileTypeChanges: []
-        }
-      }
-    }
+    },
+    days: []
   });
 
-  assert.doesNotMatch(html, /文件类型分布变化/);
+  assert.doesNotMatch(html, /热力线/);
 });

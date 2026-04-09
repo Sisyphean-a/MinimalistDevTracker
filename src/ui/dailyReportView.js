@@ -2,6 +2,11 @@ const { toLocalDateKey } = require('../core/dateKey');
 
 const MIN_BAR_PERCENT = 4;
 const MAX_FILE_TYPE_CHANGES = 8;
+const HEAT_COLORS = ['#edf5f2', '#d9ece4', '#a8d9c4', '#5ab89c', '#0f7b62'];
+const REPORT_PERIOD_OPTIONS = [
+  { value: 'rolling30', label: '最近30天' },
+  { value: 'month', label: '本月' }
+];
 
 function escapeHtml(value) {
   return String(value)
@@ -29,6 +34,13 @@ function formatTime(timestamp) {
   const mm = String(date.getMinutes()).padStart(2, '0');
   const ss = String(date.getSeconds()).padStart(2, '0');
   return `${hh}:${mm}:${ss}`;
+}
+
+function formatDurationSeconds(durationMs) {
+  if ((durationMs ?? 0) <= 0) {
+    return '0秒';
+  }
+  return `${Math.max(1, Math.ceil(durationMs / 1000))}秒`;
 }
 
 function parseProjectKey(projectKey) {
@@ -202,22 +214,55 @@ function renderDayBarRows(dayBuckets) {
     .join('');
 }
 
-function renderDailyDurationSection(projects) {
-  const dayBuckets = buildDayBuckets(projects);
-  if (dayBuckets.length === 0) {
-    return '';
+function getHeatColor(ratio) {
+  if (ratio <= 0) {
+    return HEAT_COLORS[0];
   }
-  return [
-    '<section class="panel"><h3>按天活跃时长对比</h3>',
-    '<div class="day-bars">',
-    renderDayBarRows(dayBuckets),
-    '</div>',
-    '</section>'
-  ].join('');
+  const index = Math.min(HEAT_COLORS.length - 1, Math.floor(ratio * HEAT_COLORS.length));
+  return HEAT_COLORS[index];
 }
 
 function formatShare(value) {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function renderPeriodSelector(periodType) {
+  const options = REPORT_PERIOD_OPTIONS.map((option) => {
+    const selected = option.value === periodType ? ' selected' : '';
+    return `<option value="${escapeHtml(option.value)}"${selected}>${escapeHtml(option.label)}</option>`;
+  }).join('');
+  return [
+    '<label class="range-picker">',
+    '<span>时间范围</span>',
+    `<select id="range-select">${options}</select>`,
+    '</label>'
+  ].join('');
+}
+
+function renderHeatLineSection(days) {
+  if (!Array.isArray(days) || days.length === 0) {
+    return '';
+  }
+  const maxDurationMs = days.reduce((maxValue, day) => Math.max(maxValue, day.totalActiveTimeMs ?? 0), 0);
+  const cells = days.map((day) => {
+    const durationMs = day.totalActiveTimeMs ?? 0;
+    const ratio = maxDurationMs === 0 ? 0 : durationMs / maxDurationMs;
+    const background = getHeatColor(ratio);
+    const seconds = formatDurationSeconds(durationMs);
+    return [
+      '<div class="heat-cell">',
+      `<div class="heat-date">${escapeHtml(day.date)}</div>`,
+      `<div class="heat-time" style="background:${escapeHtml(background)}">${escapeHtml(seconds)}</div>`,
+      '</div>'
+    ].join('');
+  }).join('');
+  return [
+    '<section class="panel"><h3>整体热力线</h3>',
+    '<div class="heat-strip">',
+    cells,
+    '</div>',
+    '</section>'
+  ].join('');
 }
 
 function buildTrendBarRows(days, maxValue, valueKey) {
@@ -330,7 +375,7 @@ function renderSessionRows(projects) {
       `<td>${escapeHtml(session.branch)}</td>`,
       `<td>${escapeHtml(formatTime(session.startTime))}</td>`,
       `<td>${escapeHtml(formatTime(session.endTime))}</td>`,
-      `<td>${escapeHtml(formatDuration(session.durationMs))}</td>`,
+      `<td>${escapeHtml(formatDurationSeconds(session.durationMs))}</td>`,
       `<td>+${escapeHtml(session.trackedLocAdded)} / -${escapeHtml(session.trackedLocDeleted)}</td>`,
       `<td>+${escapeHtml(session.untrackedLocAdded)} / -${escapeHtml(session.untrackedLocDeleted)}</td>`,
       `<td>${escapeHtml(totalLoc)}</td>`,
@@ -345,7 +390,9 @@ function createRefreshScript(refreshIntervalMs) {
     '(function(){',
     'const vscode = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;',
     'const btn = document.getElementById("refresh-btn");',
+    'const select = document.getElementById("range-select");',
     'if (btn && vscode) { btn.addEventListener("click", function(){ vscode.postMessage({ type: "refresh-report" }); }); }',
+    'if (select && vscode) { select.addEventListener("change", function(){ vscode.postMessage({ type: "refresh-report", periodType: select.value }); }); }',
     `if (vscode) { setInterval(function(){ vscode.postMessage({ type: "refresh-report" }); }, ${refreshIntervalMs}); }`,
     '})();',
     '</script>'
@@ -362,6 +409,7 @@ function renderDailyReportHtml(dailyData, options = {}) {
   }
 
   const refreshIntervalMs = options.refreshIntervalMs ?? 30_000;
+  const periodType = dailyData.periodType ?? 'rolling30';
   const projects = toProjectList(dailyData.projects);
   if (projects.length === 0) {
     return renderEmptyHtml();
@@ -370,9 +418,11 @@ function renderDailyReportHtml(dailyData, options = {}) {
   const fileTypeStats = aggregateByFileType(projects);
   const projectRows = renderProjectRows(projects);
   const fileTypeRows = renderFileTypeRows(fileTypeStats);
-  const dailyDurationSection = renderDailyDurationSection(projects);
-  const trendPanels = renderTrendPanels(options.trendData);
+  const heatLineSection = renderHeatLineSection(dailyData.days);
   const sessionRows = renderSessionRows(projects);
+  const rangeLabel = dailyData.dateRangeStart && dailyData.dateRangeEnd
+    ? `${escapeHtml(dailyData.dateRangeStart)} ~ ${escapeHtml(dailyData.dateRangeEnd)}`
+    : '';
 
   return [
     '<html>',
@@ -381,6 +431,8 @@ function renderDailyReportHtml(dailyData, options = {}) {
     'body{margin:0;background:linear-gradient(180deg,#e8f3ef,#f6f7f3);font-family:"Segoe UI",Arial,sans-serif;color:var(--text);padding:16px;}',
     '.header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;}',
     '.title{font-size:30px;font-weight:700;margin:0;}',
+    '.range-picker{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);}',
+    '.range-picker select{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px;color:var(--text);font:inherit;}',
     '.muted{color:var(--muted);font-size:12px;}',
     '.btn{border:0;background:var(--accent);color:#fff;padding:10px 14px;border-radius:8px;cursor:pointer;font-weight:600;}',
     '.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px;}',
@@ -392,11 +444,10 @@ function renderDailyReportHtml(dailyData, options = {}) {
     'table{width:100%;border-collapse:collapse;}',
     'th,td{border:1px solid var(--line);padding:8px;text-align:left;font-size:13px;}',
     'th{background:#eef3f2;}',
-    '.day-bars{display:flex;flex-direction:column;gap:8px;}',
-    '.day-bar-row{display:grid;grid-template-columns:120px 120px 1fr 80px;align-items:center;gap:10px;}',
-    '.day-bar-day,.day-bar-duration,.day-bar-count{font-size:13px;}',
-    '.day-bar-track{height:12px;background:#e4ece9;border-radius:999px;overflow:hidden;}',
-    '.day-bar-fill{height:100%;background:linear-gradient(90deg,#27a37d,#0f7b62);border-radius:999px;}',
+    '.heat-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(82px,1fr));gap:8px;}',
+    '.heat-cell{display:flex;flex-direction:column;gap:6px;}',
+    '.heat-date{font-size:12px;color:var(--muted);}',
+    '.heat-time{min-height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#16302c;border:1px solid rgba(15,123,98,0.08);}',
     '.trend-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;}',
     '.trend-bars{display:flex;flex-direction:column;gap:6px;}',
     '.trend-row{display:grid;grid-template-columns:96px 1fr 80px;align-items:center;gap:8px;}',
@@ -410,8 +461,8 @@ function renderDailyReportHtml(dailyData, options = {}) {
     '</style></head>',
     '<body>',
     '<div class="header">',
-    `<h2 class="title">Minimalist Dev Tracker - ${escapeHtml(dailyData.date)}</h2>`,
-    '<div><button id="refresh-btn" class="btn">立即刷新</button></div>',
+    `<div><h2 class="title">Minimalist Dev Tracker</h2><div class="muted">${escapeHtml(dailyData.periodLabel ?? periodType)}${rangeLabel ? ` · ${rangeLabel}` : ''}</div></div>`,
+    `<div style="display:flex;align-items:center;gap:10px;">${renderPeriodSelector(periodType)}<button id="refresh-btn" class="btn">立即刷新</button></div>`,
     '</div>',
     `<p class="muted">自动刷新间隔：${escapeHtml(Math.floor(refreshIntervalMs / 1000))} 秒</p>`,
     renderSummaryCards(summary),
@@ -421,8 +472,7 @@ function renderDailyReportHtml(dailyData, options = {}) {
     '<section class="panel"><h3>按文件类型统计</h3>',
     '<table><thead><tr><th>文件类型</th><th>新增代码行</th><th>删除代码行</th><th>总变更行</th></tr></thead>',
     `<tbody>${fileTypeRows || '<tr><td colspan="4">暂无按类型统计数据</td></tr>'}</tbody></table></section>`,
-    trendPanels,
-    dailyDurationSection,
+    heatLineSection,
     '<section class="panel"><h3>会话明细</h3>',
     '<table><thead><tr><th>仓库</th><th>分支</th><th>开始</th><th>结束</th><th>时长</th><th>已跟踪变更</th><th>未跟踪新文件</th><th>总变更行</th></tr></thead>',
     `<tbody>${sessionRows || '<tr><td colspan="8">暂无会话数据</td></tr>'}</tbody></table></section>`,

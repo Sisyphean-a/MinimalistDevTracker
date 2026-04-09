@@ -86,6 +86,7 @@ function createTracker(storage, gitDiffProvider) {
 function createReportPanelController(context, input) {
   let panel = null;
   let timerHandle = null;
+  let selectedPeriodType = 'rolling30';
 
   function clearTimer() {
     if (timerHandle) {
@@ -102,13 +103,12 @@ function createReportPanelController(context, input) {
       await input.tracker.flushAll();
     }
     const repoPaths = input.getReportRepoPaths();
-    const [data, trendData] = await Promise.all([
-      input.storage.readLatestDaily({ repoPaths }),
-      input.storage.readTrendData({ windows: [7, 30], repoPaths })
-    ]);
+    const data = await input.storage.readReportData({
+      periodType: selectedPeriodType,
+      repoPaths
+    });
     panel.webview.html = renderDailyReportHtml(data, {
-      refreshIntervalMs: REFRESH_INTERVAL_MS,
-      trendData
+      refreshIntervalMs: REFRESH_INTERVAL_MS
     });
   }
 
@@ -131,6 +131,9 @@ function createReportPanelController(context, input) {
     panel.webview.onDidReceiveMessage((message) => {
       if (message?.type !== 'refresh-report') {
         return;
+      }
+      if (typeof message.periodType === 'string') {
+        selectedPeriodType = message.periodType === 'month' ? 'month' : 'rolling30';
       }
       Promise.resolve(refreshReport()).catch((error) => reportRuntimeError('refreshReport', error));
     }, null, context.subscriptions);

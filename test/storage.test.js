@@ -255,6 +255,80 @@ test('readTrendData computes file type share delta versus previous window', asyn
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test('readReportData aggregates the selected rolling window', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-report-range-'));
+  const storage = createStorage(dir, {
+    now: () => Date.parse('2026-04-09T10:00:00.000Z')
+  });
+
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    startTime: Date.parse('2026-04-08T01:00:00.000Z'),
+    endTime: Date.parse('2026-04-08T02:00:00.000Z'),
+    durationMs: 1_500,
+    locAdded: 4,
+    locDeleted: 1,
+    locByFileType: { js: { locAdded: 4, locDeleted: 1 } }
+  });
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    startTime: Date.parse('2026-03-12T01:00:00.000Z'),
+    endTime: Date.parse('2026-03-12T02:00:00.000Z'),
+    durationMs: 3_600_000,
+    locAdded: 10,
+    locDeleted: 2,
+    locByFileType: { vue: { locAdded: 10, locDeleted: 2 } }
+  });
+
+  const report = await storage.readReportData({ periodType: 'rolling30' });
+
+  assert.equal(report.periodType, 'rolling30');
+  assert.equal(report.periodLabel, '最近30天');
+  assert.equal(report.days.length, 30);
+  assert.equal(report.totalActiveTimeMs, 3_601_500);
+  assert.equal(report.totalLocAdded, 14);
+  assert.equal(report.totalLocDeleted, 3);
+  assert.equal(report.projects['f:/repo/main'].sessions.length, 2);
+  assert.equal(report.days.at(-1).date, '2026-04-09');
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('readReportData aggregates the current month only', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-report-month-'));
+  const storage = createStorage(dir, {
+    now: () => Date.parse('2026-04-09T10:00:00.000Z')
+  });
+
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    startTime: Date.parse('2026-04-08T01:00:00.000Z'),
+    endTime: Date.parse('2026-04-08T02:00:00.000Z'),
+    durationMs: 1_500,
+    locAdded: 4,
+    locDeleted: 1
+  });
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    startTime: Date.parse('2026-03-31T01:00:00.000Z'),
+    endTime: Date.parse('2026-03-31T02:00:00.000Z'),
+    durationMs: 9_000,
+    locAdded: 9,
+    locDeleted: 9
+  });
+
+  const report = await storage.readReportData({ periodType: 'month' });
+
+  assert.equal(report.periodType, 'month');
+  assert.equal(report.periodLabel, '本月');
+  assert.equal(report.days[0].date, '2026-04-01');
+  assert.equal(report.totalActiveTimeMs, 1_500);
+  assert.equal(report.totalLocAdded, 4);
+  assert.equal(report.totalLocDeleted, 1);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test('readLatestDaily filters projects to target repo paths', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-report-filter-'));
   const storage = createStorage(dir);
