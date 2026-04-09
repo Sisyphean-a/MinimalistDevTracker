@@ -152,3 +152,23 @@ test('migrateLegacyStorageData skips malformed or zero-loc session rows and repo
 
   await fs.rm(root, { recursive: true, force: true });
 });
+
+test('migrateLegacyStorageData treats a missing legacy source directory as an empty import', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-migrate-missing-source-'));
+  const sourceDir = path.join(root, 'missing-source');
+  const targetDir = path.join(root, 'target');
+
+  const summary = await migrateLegacyStorageData({ sourceDir, targetDir });
+  const databasePath = path.join(targetDir, 'storage.db');
+  const database = await openDatabase(databasePath);
+
+  assert.equal(summary.scannedFiles, 0);
+  assert.equal(summary.importedSessions, 0);
+  assert.equal(summary.skippedSessions, 0);
+  assert.equal(summary.ignoredExistingSessions, 0);
+  assert.deepEqual(summary.failedFiles, []);
+  assert.equal(database.getMeta('legacy_import_completed_at') !== null, true);
+
+  database.close();
+  await fs.rm(root, { recursive: true, force: true });
+});

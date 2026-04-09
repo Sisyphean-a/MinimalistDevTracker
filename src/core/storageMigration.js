@@ -15,12 +15,13 @@ function assertAbsoluteDirectory(inputPath, fieldName) {
   }
 }
 
-async function ensureSourceReadable(sourceDir) {
+async function sourceExists(sourceDir) {
   try {
     await fs.access(sourceDir);
+    return true;
   } catch (error) {
     if (error.code === 'ENOENT') {
-      throw new Error(`source storage does not exist: ${sourceDir}`);
+      return false;
     }
     throw error;
   }
@@ -151,10 +152,18 @@ async function migrateLegacyStorageData(options) {
   assertAbsoluteDirectory(sourceDir, 'sourceDir');
   assertAbsoluteDirectory(targetDir, 'targetDir');
 
-  await ensureSourceReadable(sourceDir);
   await fs.mkdir(targetDir, { recursive: true });
-
-  const { sessions, summary } = await collectLegacySessions(sourceDir);
+  const hasSourceDir = await sourceExists(sourceDir);
+  const { sessions, summary } = hasSourceDir
+    ? await collectLegacySessions(sourceDir)
+    : {
+        sessions: [],
+        summary: {
+          scannedFiles: 0,
+          skippedSessions: 0,
+          failedFiles: []
+        }
+      };
   const database = await openDatabase(databasePath);
   const insertStatement = database.prepare(`
     INSERT OR IGNORE INTO sessions (
