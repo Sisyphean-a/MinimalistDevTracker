@@ -50,6 +50,34 @@ test('storage bootstrapper skips migration when import marker already exists', a
   assert.equal(storage.storageRootPath, 'F:/tracker');
 });
 
+test('storage bootstrapper retries legacy import when the database is empty but source JSON still exists', async () => {
+  const actions = [];
+  const bootstrap = createStorageBootstrapper({
+    storageRootPath: 'F:/tracker',
+    legacyStoragePath: 'F:/legacy',
+    migrationSourceDirs: ['F:/tracker', 'F:/legacy', 'F:/tracker'],
+    readStorageSnapshot: async () => ({
+      legacyImportCompletedAt: '2026-04-09T08:28:48.000Z',
+      sessionCount: 0
+    }),
+    migrateLegacyStorageData: async (input) => {
+      actions.push(['migrate', input]);
+    },
+    createStorage: (storageRootPath) => {
+      actions.push(['createStorage', storageRootPath]);
+      return { storageRootPath };
+    }
+  });
+
+  await bootstrap();
+
+  assert.deepEqual(actions, [
+    ['migrate', { sourceDir: 'F:/tracker', targetDir: 'F:/tracker' }],
+    ['migrate', { sourceDir: 'F:/legacy', targetDir: 'F:/tracker' }],
+    ['createStorage', 'F:/tracker']
+  ]);
+});
+
 test('manual migration command reports imported and skipped session counts', async () => {
   const messages = [];
   const commands = {};

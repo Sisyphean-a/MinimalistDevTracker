@@ -34,12 +34,22 @@ function createTrackedRuntimeReloader(options) {
 
 function createStorageBootstrapper(options) {
   return async function bootstrapStorage() {
-    const importCompletedAt = await options.readLegacyImportCompletedAt();
-    if (!importCompletedAt) {
-      await options.migrateLegacyStorageData({
-        sourceDir: options.legacyStoragePath,
-        targetDir: options.storageRootPath
-      });
+    const snapshot = options.readStorageSnapshot
+      ? await options.readStorageSnapshot()
+      : {
+          legacyImportCompletedAt: await options.readLegacyImportCompletedAt(),
+          sessionCount: null
+        };
+    const sourceDirs = [...new Set((options.migrationSourceDirs ?? [options.legacyStoragePath]).filter(Boolean))];
+    const shouldRetryEmptyImport = snapshot.sessionCount === 0 && sourceDirs.length > 0;
+
+    if (!snapshot.legacyImportCompletedAt || shouldRetryEmptyImport) {
+      for (const sourceDir of sourceDirs) {
+        await options.migrateLegacyStorageData({
+          sourceDir,
+          targetDir: options.storageRootPath
+        });
+      }
     }
     return options.createStorage(options.storageRootPath);
   };

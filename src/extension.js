@@ -229,6 +229,29 @@ function registerConfigurationReload(context, input) {
   context.subscriptions.push(disposable);
 }
 
+function createLegacyMigrationRunner(storageRootPath, legacyStoragePath) {
+  const sourceDirs = [...new Set([storageRootPath, legacyStoragePath].filter(Boolean))];
+  return async function runLegacyMigration() {
+    const summary = {
+      importedSessions: 0,
+      skippedSessions: 0,
+      ignoredExistingSessions: 0
+    };
+
+    for (const sourceDir of sourceDirs) {
+      const current = await migrateLegacyStorageData({
+        sourceDir,
+        targetDir: storageRootPath
+      });
+      summary.importedSessions += current.importedSessions;
+      summary.skippedSessions += current.skippedSessions;
+      summary.ignoredExistingSessions += current.ignoredExistingSessions;
+    }
+
+    return summary;
+  };
+}
+
 async function activate(context) {
   const normalizer = createPathNormalizer();
   const gitClient = createGitClient();
@@ -243,14 +266,19 @@ async function activate(context) {
     defaultSharedStoragePath
   });
   const legacyStoragePath = context.globalStorageUri.fsPath;
+  const runLegacyMigration = createLegacyMigrationRunner(storageRootPath, legacyStoragePath);
   const bootstrapStorage = createStorageBootstrapper({
     storageRootPath,
     legacyStoragePath,
-    readLegacyImportCompletedAt: async () => {
+    migrationSourceDirs: [storageRootPath, legacyStoragePath],
+    readStorageSnapshot: async () => {
       const database = await openDatabase(path.join(storageRootPath, 'storage.db'));
-      const value = database.getMeta('legacy_import_completed_at');
+      const snapshot = {
+        legacyImportCompletedAt: database.getMeta('legacy_import_completed_at'),
+        sessionCount: database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count
+      };
       database.close();
-      return value;
+      return snapshot;
     },
     migrateLegacyStorageData,
     createStorage
@@ -294,7 +322,7 @@ async function activate(context) {
     reportCommandId: REPORT_COMMAND_ID,
     migrateCommandId: MIGRATE_STORAGE_COMMAND_ID,
     reportPanelController,
-    migrateLegacyStorageData,
+    migrateLegacyStorageData: runLegacyMigration,
     storageRootPath,
     legacyStoragePath
   });
