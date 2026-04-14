@@ -109,7 +109,8 @@ test('renderDailyReportHtml clarifies untracked metrics and avoids duplicate aut
   });
 
   assert.match(html, /未纳入 Git 的文件/);
-  assert.match(html, /按当前文件总行数增量统计/);
+  assert.match(html, /统计的是未纳入 Git 文件的当前总行数，以及后续编辑带来的增量/);
+  assert.match(html, /不包含已纳入 Git 文件的未提交 diff/);
   assert.doesNotMatch(html, /未跟踪新文件/);
   assert.doesNotMatch(html, /setInterval\(/);
 });

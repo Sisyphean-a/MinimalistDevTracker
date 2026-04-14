@@ -68,7 +68,7 @@ function renderSummaryCards(summary) {
 }
 
 function renderUntrackedExplanation() {
-  return '<p class="muted note">“未纳入 Git 的文件”按当前文件总行数增量统计，不代表全部未提交改动。</p>';
+  return '<p class="muted note">“未纳入 Git 的文件”统计的是未纳入 Git 文件的当前总行数，以及后续编辑带来的增量；不包含已纳入 Git 文件的未提交 diff。</p>';
 }
 
 function renderProjectRows(projects) {
