@@ -8,6 +8,7 @@ require('./runtimeTracker.fileActivity.test');
 require('./fileActivityWatcher.test');
 require('./extension.reportFlush.test');
 require('./extension.configReload.test');
+require('./reportPanelController.test');
 
 require('./dateKey.test');
 require('./sqliteDatabase.test');
@@ -17,6 +18,7 @@ require('./gitDiffProvider.test');
 require('./storage.test');
 require('./dailyReportView.test');
 require('./reportScope.test');
+require('./trackerConfig.test');
 require('./storagePathResolver.test');
 require('./storageMigration.test');
 require('./extension.storageBootstrap.test');

@@ -1,0 +1,88 @@
+function createReportPanelController(options) {
+  const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
+  const setIntervalFn = options.setIntervalFn ?? setInterval;
+  let panel = null;
+  let timerHandle = null;
+  let selectedPeriodType = 'rolling30';
+
+  function clearTimer() {
+    if (timerHandle) {
+      clearIntervalFn(timerHandle);
+      timerHandle = null;
+    }
+  }
+
+  async function refreshReport() {
+    if (!panel) {
+      return;
+    }
+    if (options.shouldFlushBeforeReport()) {
+      await options.tracker.flushAll();
+    }
+    const data = await options.storage.readReportData({
+      periodType: selectedPeriodType,
+      repoPaths: options.getReportRepoPaths()
+    });
+    panel.webview.html = options.renderDailyReportHtml(data, {
+      refreshIntervalMs: options.refreshIntervalMs
+    });
+  }
+
+  function ensurePanel() {
+    if (panel) {
+      panel.reveal(options.vscode.ViewColumn.One);
+      return panel;
+    }
+
+    panel = options.vscode.window.createWebviewPanel(
+      options.reportViewType,
+      'Minimalist Dev Tracker Report',
+      options.vscode.ViewColumn.One,
+      { enableScripts: true }
+    );
+    panel.onDidDispose(() => {
+      clearTimer();
+      panel = null;
+    }, null, options.context.subscriptions);
+    panel.webview.onDidReceiveMessage((message) => {
+      if (message?.type !== 'refresh-report') {
+        return;
+      }
+      if (typeof message.periodType === 'string') {
+        selectedPeriodType = message.periodType === 'month' ? 'month' : 'rolling30';
+      }
+      Promise.resolve(refreshReport()).catch((error) => options.logError('refreshReport', error));
+    }, null, options.context.subscriptions);
+    return panel;
+  }
+
+  function ensureTimer() {
+    if (timerHandle) {
+      return;
+    }
+    timerHandle = setIntervalFn(() => {
+      Promise.resolve(refreshReport()).catch((error) => options.logError('refreshReport', error));
+    }, options.refreshIntervalMs);
+  }
+
+  async function open() {
+    ensurePanel();
+    await refreshReport();
+    ensureTimer();
+  }
+
+  function dispose() {
+    clearTimer();
+    panel?.dispose();
+    panel = null;
+  }
+
+  return Object.freeze({
+    open,
+    dispose
+  });
+}
+
+module.exports = {
+  createReportPanelController
+};

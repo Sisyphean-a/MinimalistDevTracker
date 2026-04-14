@@ -18,51 +18,20 @@ const { resolveStorageRootPath } = require('./core/storagePathResolver');
 const { migrateLegacyStorageData } = require('./core/storageMigration');
 const { registerExtensionCommands } = require('./core/extensionCommands');
 const { openDatabase } = require('./core/sqliteDatabase');
+const { createTrackerConfigReader } = require('./core/trackerConfig');
+const { createReportPanelController } = require('./ui/reportPanelController');
 const { listWorkspaceFolderPaths, resolveWorkspaceAllowedPaths } = require('./core/workspaceTracking');
 const { renderDailyReportHtml } = require('./ui/dailyReportView');
-
 const REPORT_VIEW_TYPE = 'minimalTracker.dailyReport';
 const REPORT_COMMAND_ID = 'minimalTracker.openDailyReport';
 const MIGRATE_STORAGE_COMMAND_ID = 'minimalTracker.migrateLegacyStorageData';
 const EXCLUDE_GLOBS_KEY = 'minimalTracker.fileWatch.excludeGlobs';
-const SHARED_STORAGE_PATH_KEY = 'minimalTracker.sharedStoragePath';
 const DEFAULT_SHARED_STORAGE_DIR_NAME = '.minimalist-dev-tracker';
 const REFRESH_INTERVAL_MS = 30_000;
 let runtime = null;
-
 function reportRuntimeError(label, error) {
   console.error(`[minimal-tracker] ${label} failed`, error);
 }
-
-function getMinimalTrackerConfig() {
-  return vscode.workspace.getConfiguration('minimalTracker');
-}
-
-function readStringArrayConfig(path, fallback = []) {
-  const rawValue = getMinimalTrackerConfig().get(path, fallback);
-  if (!Array.isArray(rawValue)) {
-    return fallback;
-  }
-  return rawValue.filter((value) => typeof value === 'string' && value.trim());
-}
-
-function getExcludeGlobs() {
-  return readStringArrayConfig('fileWatch.excludeGlobs', []);
-}
-
-function shouldFlushBeforeReport() {
-  const config = vscode.workspace.getConfiguration('minimalTracker');
-  return config.get('flushBeforeReport', true);
-}
-
-function getSharedStoragePath() {
-  const rawValue = getMinimalTrackerConfig().get('sharedStoragePath', '');
-  if (typeof rawValue !== 'string') {
-    throw new Error(`${SHARED_STORAGE_PATH_KEY} must be a string`);
-  }
-  return rawValue;
-}
-
 function createTracker(storage, gitDiffProvider) {
   return createTimeTracker({
     now: () => Date.now(),
@@ -77,90 +46,6 @@ function createTracker(storage, gitDiffProvider) {
         console.error('[minimal-tracker] failed to persist session', error);
       }
     }
-  });
-}
-
-function createReportPanelController(context, input) {
-  let panel = null;
-  let timerHandle = null;
-  let selectedPeriodType = 'rolling30';
-
-  function clearTimer() {
-    if (timerHandle) {
-      clearInterval(timerHandle);
-      timerHandle = null;
-    }
-  }
-
-  async function refreshReport() {
-    if (!panel) {
-      return;
-    }
-    if (shouldFlushBeforeReport()) {
-      await input.tracker.flushAll();
-    }
-    const repoPaths = input.getReportRepoPaths();
-    const data = await input.storage.readReportData({
-      periodType: selectedPeriodType,
-      repoPaths
-    });
-    panel.webview.html = renderDailyReportHtml(data, {
-      refreshIntervalMs: REFRESH_INTERVAL_MS
-    });
-  }
-
-  function ensurePanel() {
-    if (panel) {
-      panel.reveal(vscode.ViewColumn.One);
-      return panel;
-    }
-
-    panel = vscode.window.createWebviewPanel(
-      REPORT_VIEW_TYPE,
-      'Minimalist Dev Tracker Report',
-      vscode.ViewColumn.One,
-      { enableScripts: true }
-    );
-    panel.onDidDispose(() => {
-      clearTimer();
-      panel = null;
-    }, null, context.subscriptions);
-    panel.webview.onDidReceiveMessage((message) => {
-      if (message?.type !== 'refresh-report') {
-        return;
-      }
-      if (typeof message.periodType === 'string') {
-        selectedPeriodType = message.periodType === 'month' ? 'month' : 'rolling30';
-      }
-      Promise.resolve(refreshReport()).catch((error) => reportRuntimeError('refreshReport', error));
-    }, null, context.subscriptions);
-    return panel;
-  }
-
-  function ensureTimer() {
-    if (timerHandle) {
-      return;
-    }
-    timerHandle = setInterval(() => {
-      Promise.resolve(refreshReport()).catch((error) => reportRuntimeError('refreshReport', error));
-    }, REFRESH_INTERVAL_MS);
-  }
-
-  async function open() {
-    ensurePanel();
-    await refreshReport();
-    ensureTimer();
-  }
-
-  function dispose() {
-    clearTimer();
-    panel?.dispose();
-    panel = null;
-  }
-
-  return Object.freeze({
-    open,
-    dispose
   });
 }
 
@@ -208,7 +93,7 @@ async function buildPathRegistry(trackedPaths, input) {
 function registerConfigurationReload(context, input) {
   const reloadTrackedRuntime = createTrackedRuntimeReloader({
     loadTrackingRoots: () => listWorkspaceFolderPaths(vscode.workspace.workspaceFolders),
-    loadExcludeGlobs: getExcludeGlobs,
+    loadExcludeGlobs: input.getExcludeGlobs,
     buildPathRegistry: (trackingRoots) => buildPathRegistry(trackingRoots, input.pathRegistryDeps),
     onPathRegistryUpdated: input.onPathRegistryUpdated,
     runtimeTracker: input.runtimeTracker,
@@ -254,6 +139,7 @@ function createLegacyMigrationRunner(storageRootPath, legacyStoragePath) {
 }
 
 async function activate(context) {
+  const config = createTrackerConfigReader(vscode);
   const normalizer = createPathNormalizer();
   const gitClient = createGitClient();
   const pathRegistryDeps = { gitClient, normalizer };
@@ -261,7 +147,7 @@ async function activate(context) {
   let currentPathRegistry = pathRegistry;
   const defaultSharedStoragePath = path.join(os.homedir(), DEFAULT_SHARED_STORAGE_DIR_NAME);
   const storageRootPath = resolveStorageRootPath({
-    sharedStoragePath: getSharedStoragePath(),
+    sharedStoragePath: config.getSharedStoragePath(),
     defaultStoragePath: context.globalStorageUri.fsPath,
     defaultSharedStoragePath
   });
@@ -286,10 +172,17 @@ async function activate(context) {
   const storage = await bootstrapStorage();
   const gitDiffProvider = createGitDiffProvider(vscode, { gitClient, normalizer });
   const tracker = createTracker(storage, gitDiffProvider);
-  const reportPanelController = createReportPanelController(context, {
+  const reportPanelController = createReportPanelController({
+    vscode,
+    context,
+    reportViewType: REPORT_VIEW_TYPE,
     tracker,
     storage,
-    getReportRepoPaths: () => resolveReportRepoPaths(vscode.workspace.workspaceFolders, currentPathRegistry)
+    shouldFlushBeforeReport: config.shouldFlushBeforeReport,
+    getReportRepoPaths: () => resolveReportRepoPaths(vscode.workspace.workspaceFolders, currentPathRegistry),
+    renderDailyReportHtml,
+    refreshIntervalMs: REFRESH_INTERVAL_MS,
+    logError: reportRuntimeError
   });
   let runtimeTrackerRef = null;
   const commitWatcher = createCommitWatcher({
@@ -311,7 +204,7 @@ async function activate(context) {
   const fileActivityWatcher = createFileActivityWatcher({
     vscode,
     roots: pathRegistry.getAllowedRoots(),
-    excludeGlobs: getExcludeGlobs(),
+    excludeGlobs: config.getExcludeGlobs(),
     onFileActivity: (fsPath) => runtimeTrackerRef.recordPathActivity(fsPath),
     logError: reportRuntimeError
   });
@@ -329,6 +222,7 @@ async function activate(context) {
   await wireGitIntegration(context, runtimeTrackerRef);
   registerEditorListeners(context, runtimeTrackerRef);
   registerConfigurationReload(context, {
+    getExcludeGlobs: config.getExcludeGlobs,
     runtimeTracker: runtimeTrackerRef,
     fileActivityWatcher,
     pathRegistryDeps,
