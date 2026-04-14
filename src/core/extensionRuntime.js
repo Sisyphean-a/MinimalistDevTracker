@@ -1,16 +1,3 @@
-function createOpenDailyReportHandler(options) {
-  const shouldFlushBeforeReport = options.shouldFlushBeforeReport;
-  const tracker = options.tracker;
-  const showDailyReport = options.showDailyReport;
-
-  return async function openDailyReport() {
-    if (shouldFlushBeforeReport()) {
-      await tracker.flushAll();
-    }
-    await showDailyReport();
-  };
-}
-
 function ensureRegistryContract(pathRegistry) {
   if (typeof pathRegistry?.getAllowedRoots !== 'function') {
     throw new Error('buildPathRegistry must return an object with getAllowedRoots()');
@@ -56,7 +43,6 @@ function createStorageBootstrapper(options) {
 }
 
 module.exports = {
-  createOpenDailyReportHandler,
   createTrackedRuntimeReloader,
   createStorageBootstrapper
 };

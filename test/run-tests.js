@@ -6,8 +6,8 @@ require('./commitWatcher.test');
 require('./runtimeTracker.test');
 require('./runtimeTracker.fileActivity.test');
 require('./fileActivityWatcher.test');
-require('./extension.reportFlush.test');
 require('./extension.configReload.test');
+require('./extensionRuntime.test');
 require('./reportPanelController.test');
 
 require('./dateKey.test');
