@@ -2,6 +2,7 @@ function createReportPanelController(options) {
   const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
   const setIntervalFn = options.setIntervalFn ?? setInterval;
   let panel = null;
+  let panelSubscriptions = [];
   let timerHandle = null;
   let selectedPeriodType = 'rolling30';
 
@@ -10,6 +11,35 @@ function createReportPanelController(options) {
       clearIntervalFn(timerHandle);
       timerHandle = null;
     }
+  }
+
+  function disposePanelSubscriptions() {
+    panelSubscriptions.forEach((subscription) => subscription.dispose());
+    panelSubscriptions = [];
+  }
+
+  function handlePanelDisposed() {
+    clearTimer();
+    disposePanelSubscriptions();
+    panel = null;
+  }
+
+  function registerPanelListeners(panelInstance) {
+    disposePanelSubscriptions();
+    panelSubscriptions = [
+      panelInstance.onDidDispose(() => {
+        handlePanelDisposed();
+      }),
+      panelInstance.webview.onDidReceiveMessage((message) => {
+        if (message?.type !== 'refresh-report') {
+          return;
+        }
+        if (typeof message.periodType === 'string') {
+          selectedPeriodType = message.periodType === 'month' ? 'month' : 'rolling30';
+        }
+        Promise.resolve(refreshReport({ shouldFlush: true })).catch((error) => options.logError('refreshReport', error));
+      })
+    ];
   }
 
   async function refreshReport(input = {}) {
@@ -40,19 +70,7 @@ function createReportPanelController(options) {
       options.vscode.ViewColumn.One,
       { enableScripts: true }
     );
-    panel.onDidDispose(() => {
-      clearTimer();
-      panel = null;
-    }, null, options.context.subscriptions);
-    panel.webview.onDidReceiveMessage((message) => {
-      if (message?.type !== 'refresh-report') {
-        return;
-      }
-      if (typeof message.periodType === 'string') {
-        selectedPeriodType = message.periodType === 'month' ? 'month' : 'rolling30';
-      }
-      Promise.resolve(refreshReport({ shouldFlush: true })).catch((error) => options.logError('refreshReport', error));
-    }, null, options.context.subscriptions);
+    registerPanelListeners(panel);
     return panel;
   }
 
@@ -74,6 +92,7 @@ function createReportPanelController(options) {
   function dispose() {
     clearTimer();
     panel?.dispose();
+    disposePanelSubscriptions();
     panel = null;
   }
 

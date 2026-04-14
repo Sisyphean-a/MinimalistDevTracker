@@ -3,6 +3,15 @@ const assert = require('node:assert/strict');
 
 const { createReportPanelController } = require('../src/ui/reportPanelController');
 
+function createDisposable() {
+  return {
+    disposed: false,
+    dispose() {
+      this.disposed = true;
+    }
+  };
+}
+
 function createMockPanel() {
   let disposeHandler = null;
   let messageHandler = null;
@@ -10,14 +19,18 @@ function createMockPanel() {
   return {
     webview: {
       html: '',
-      onDidReceiveMessage: (handler) => {
+      onDidReceiveMessage: (handler, _thisArg, subscriptions) => {
         messageHandler = handler;
-        return { dispose() {} };
+        const disposable = createDisposable();
+        subscriptions?.push(disposable);
+        return disposable;
       }
     },
-    onDidDispose: (handler) => {
+    onDidDispose: (handler, _thisArg, subscriptions) => {
       disposeHandler = handler;
-      return { dispose() {} };
+      const disposable = createDisposable();
+      subscriptions?.push(disposable);
+      return disposable;
     },
     revealCalls: [],
     reveal(column) {
@@ -160,4 +173,43 @@ test('report panel controller auto refreshes without flushing active sessions ag
     { periodType: 'rolling30', repoPaths: ['f:/repo/main'] },
     { periodType: 'rolling30', repoPaths: ['f:/repo/main'] }
   ]);
+});
+
+test('report panel controller does not accumulate panel listeners in global subscriptions across reopen', async () => {
+  const panels = [];
+  const context = { subscriptions: [] };
+  const controller = createReportPanelController({
+    vscode: {
+      ViewColumn: { One: 1 },
+      window: {
+        createWebviewPanel: () => {
+          const panel = createMockPanel();
+          panels.push(panel);
+          return panel;
+        }
+      }
+    },
+    context,
+    reportViewType: 'minimalTracker.dailyReport',
+    tracker: { flushAll: async () => {} },
+    storage: {
+      readReportData: async () => ({ projects: { 'f:/repo/main||main': { totalLocAdded: 1, totalLocDeleted: 0, sessions: [] } } })
+    },
+    getReportRepoPaths: () => ['f:/repo/main'],
+    shouldFlushBeforeReport: () => false,
+    renderDailyReportHtml: () => '<html></html>',
+    refreshIntervalMs: 30_000,
+    logError: (label, error) => {
+      throw new Error(`${label}:${error.message}`);
+    },
+    setIntervalFn: () => 'timer-handle',
+    clearIntervalFn: () => {}
+  });
+
+  await controller.open();
+  panels[0].dispose();
+  await controller.open();
+  panels[1].dispose();
+
+  assert.deepEqual(context.subscriptions, []);
 });
