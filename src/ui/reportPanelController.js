@@ -12,11 +12,11 @@ function createReportPanelController(options) {
     }
   }
 
-  async function refreshReport() {
+  async function refreshReport(input = {}) {
     if (!panel) {
       return;
     }
-    if (options.shouldFlushBeforeReport()) {
+    if (input.shouldFlush && options.shouldFlushBeforeReport()) {
       await options.tracker.flushAll();
     }
     const data = await options.storage.readReportData({
@@ -51,7 +51,7 @@ function createReportPanelController(options) {
       if (typeof message.periodType === 'string') {
         selectedPeriodType = message.periodType === 'month' ? 'month' : 'rolling30';
       }
-      Promise.resolve(refreshReport()).catch((error) => options.logError('refreshReport', error));
+      Promise.resolve(refreshReport({ shouldFlush: true })).catch((error) => options.logError('refreshReport', error));
     }, null, options.context.subscriptions);
     return panel;
   }
@@ -67,7 +67,7 @@ function createReportPanelController(options) {
 
   async function open() {
     ensurePanel();
-    await refreshReport();
+    await refreshReport({ shouldFlush: true });
     ensureTimer();
   }
 
