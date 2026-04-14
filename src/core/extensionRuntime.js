@@ -19,8 +19,8 @@ function ensureRegistryContract(pathRegistry) {
 
 function createTrackedRuntimeReloader(options) {
   return async function reloadTrackedRuntime() {
-    const trackedPaths = options.loadTrackedPaths();
-    const pathRegistry = await options.buildPathRegistry(trackedPaths);
+    const trackingRoots = options.loadTrackingRoots();
+    const pathRegistry = await options.buildPathRegistry(trackingRoots);
     ensureRegistryContract(pathRegistry);
     if (typeof options.onPathRegistryUpdated === 'function') {
       options.onPathRegistryUpdated(pathRegistry);

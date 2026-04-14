@@ -332,6 +332,44 @@ test('readReportData aggregates the current month only', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test('readReportData filters report output to the requested repo paths', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-report-filter-'));
+  const storage = createStorage(dir, {
+    now: () => Date.parse('2026-04-09T10:00:00.000Z')
+  });
+
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    branch: 'main',
+    startTime: Date.parse('2026-04-08T01:00:00.000Z'),
+    endTime: Date.parse('2026-04-08T02:00:00.000Z'),
+    durationMs: 1_000,
+    locAdded: 4,
+    locDeleted: 1
+  });
+  await storage.appendSession({
+    repoPath: 'f:/repo/other',
+    branch: 'main',
+    startTime: Date.parse('2026-04-08T03:00:00.000Z'),
+    endTime: Date.parse('2026-04-08T04:00:00.000Z'),
+    durationMs: 2_000,
+    locAdded: 8,
+    locDeleted: 2
+  });
+
+  const report = await storage.readReportData({
+    periodType: 'month',
+    repoPaths: ['f:/repo/main']
+  });
+
+  assert.deepEqual(Object.keys(report.projects), ['f:/repo/main||main']);
+  assert.equal(report.totalActiveTimeMs, 1_000);
+  assert.equal(report.totalLocAdded, 4);
+  assert.equal(report.totalLocDeleted, 1);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test('readLatestDaily filters projects to target repo paths', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-report-filter-'));
   const storage = createStorage(dir);

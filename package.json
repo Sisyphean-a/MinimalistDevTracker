@@ -33,14 +33,6 @@
     "configuration": {
       "title": "Minimalist Dev Tracker",
       "properties": {
-        "minimalTracker.trackedPaths": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [],
-          "description": "Absolute root repository paths to track"
-        },
         "minimalTracker.fileWatch.excludeGlobs": {
           "type": "array",
           "items": {

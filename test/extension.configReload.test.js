@@ -9,10 +9,10 @@ test('tracked runtime reloader rebuilds path registry and watcher from latest co
     getAllowedRoots: () => ['f:/repo/new']
   };
   const reloader = createTrackedRuntimeReloader({
-    loadTrackedPaths: () => ['F:/repo/new'],
+    loadTrackingRoots: () => ['F:/repo/new'],
     loadExcludeGlobs: () => ['**/*.tmp'],
-    buildPathRegistry: async (trackedPaths) => {
-      actions.push(['buildPathRegistry', trackedPaths]);
+    buildPathRegistry: async (trackingRoots) => {
+      actions.push(['buildPathRegistry', trackingRoots]);
       return nextRegistry;
     },
     runtimeTracker: {
@@ -34,7 +34,7 @@ test('tracked runtime reloader rebuilds path registry and watcher from latest co
 
 test('tracked runtime reloader throws explicit error when registry interface is invalid', async () => {
   const reloader = createTrackedRuntimeReloader({
-    loadTrackedPaths: () => ['F:/repo/new'],
+    loadTrackingRoots: () => ['F:/repo/new'],
     loadExcludeGlobs: () => [],
     buildPathRegistry: async () => ({}),
     runtimeTracker: {

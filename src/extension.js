@@ -18,12 +18,12 @@ const { resolveStorageRootPath } = require('./core/storagePathResolver');
 const { migrateLegacyStorageData } = require('./core/storageMigration');
 const { registerExtensionCommands } = require('./core/extensionCommands');
 const { openDatabase } = require('./core/sqliteDatabase');
+const { listWorkspaceFolderPaths, resolveWorkspaceAllowedPaths } = require('./core/workspaceTracking');
 const { renderDailyReportHtml } = require('./ui/dailyReportView');
 
 const REPORT_VIEW_TYPE = 'minimalTracker.dailyReport';
 const REPORT_COMMAND_ID = 'minimalTracker.openDailyReport';
 const MIGRATE_STORAGE_COMMAND_ID = 'minimalTracker.migrateLegacyStorageData';
-const TRACKED_PATHS_KEY = 'minimalTracker.trackedPaths';
 const EXCLUDE_GLOBS_KEY = 'minimalTracker.fileWatch.excludeGlobs';
 const SHARED_STORAGE_PATH_KEY = 'minimalTracker.sharedStoragePath';
 const DEFAULT_SHARED_STORAGE_DIR_NAME = '.minimalist-dev-tracker';
@@ -44,10 +44,6 @@ function readStringArrayConfig(path, fallback = []) {
     return fallback;
   }
   return rawValue.filter((value) => typeof value === 'string' && value.trim());
-}
-
-function getTrackedPaths() {
-  return readStringArrayConfig('trackedPaths', []);
 }
 
 function getExcludeGlobs() {
@@ -200,7 +196,7 @@ async function buildPathRegistry(trackedPaths, input) {
     execGit: (args) => input.gitClient.run(args),
     normalizer: input.normalizer
   });
-  const result = await discovery.resolveAllowedPaths(trackedPaths);
+  const result = await resolveWorkspaceAllowedPaths(trackedPaths, discovery);
   result.errors.forEach((error) => {
     console.error('[minimal-tracker] tracked path resolve error', error);
   });
@@ -211,22 +207,27 @@ async function buildPathRegistry(trackedPaths, input) {
 
 function registerConfigurationReload(context, input) {
   const reloadTrackedRuntime = createTrackedRuntimeReloader({
-    loadTrackedPaths: getTrackedPaths,
+    loadTrackingRoots: () => listWorkspaceFolderPaths(vscode.workspace.workspaceFolders),
     loadExcludeGlobs: getExcludeGlobs,
-    buildPathRegistry: (trackedPaths) => buildPathRegistry(trackedPaths, input.pathRegistryDeps),
+    buildPathRegistry: (trackingRoots) => buildPathRegistry(trackingRoots, input.pathRegistryDeps),
     onPathRegistryUpdated: input.onPathRegistryUpdated,
     runtimeTracker: input.runtimeTracker,
     fileActivityWatcher: input.fileActivityWatcher
   });
   const disposable = vscode.workspace.onDidChangeConfiguration((event) => {
-    if (!event.affectsConfiguration(TRACKED_PATHS_KEY) && !event.affectsConfiguration(EXCLUDE_GLOBS_KEY)) {
+    if (!event.affectsConfiguration(EXCLUDE_GLOBS_KEY)) {
       return;
     }
     Promise.resolve()
       .then(() => reloadTrackedRuntime())
       .catch((error) => reportRuntimeError('reloadTrackedRuntime', error));
   });
-  context.subscriptions.push(disposable);
+  const workspaceDisposable = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    Promise.resolve()
+      .then(() => reloadTrackedRuntime())
+      .catch((error) => reportRuntimeError('reloadTrackedRuntime', error));
+  });
+  context.subscriptions.push(disposable, workspaceDisposable);
 }
 
 function createLegacyMigrationRunner(storageRootPath, legacyStoragePath) {
@@ -255,9 +256,8 @@ function createLegacyMigrationRunner(storageRootPath, legacyStoragePath) {
 async function activate(context) {
   const normalizer = createPathNormalizer();
   const gitClient = createGitClient();
-  const trackedPaths = getTrackedPaths();
   const pathRegistryDeps = { gitClient, normalizer };
-  const pathRegistry = await buildPathRegistry(trackedPaths, pathRegistryDeps);
+  const pathRegistry = await buildPathRegistry(listWorkspaceFolderPaths(vscode.workspace.workspaceFolders), pathRegistryDeps);
   let currentPathRegistry = pathRegistry;
   const defaultSharedStoragePath = path.join(os.homedir(), DEFAULT_SHARED_STORAGE_DIR_NAME);
   const storageRootPath = resolveStorageRootPath({

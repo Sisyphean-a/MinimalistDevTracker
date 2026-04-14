@@ -4,7 +4,7 @@ A privacy-first VS Code extension that tracks local coding activity by repositor
 
 ## Features
 
-- Tracks activity under configured `minimalTracker.trackedPaths`
+- Tracks repositories/worktrees from the folders currently open in the VS Code window
 - Includes both editor events and file system events
 - Splits sessions on commit and records LOC changes
 - Stores runtime data in a local SQLite database under the resolved storage root
@@ -13,9 +13,9 @@ A privacy-first VS Code extension that tracks local coding activity by repositor
 
 ## Configuration
 
-- `minimalTracker.trackedPaths`: repository/worktree roots to track
 - `minimalTracker.fileWatch.excludeGlobs`: extra glob excludes for file watcher
 - `minimalTracker.flushBeforeReport`: flush active sessions before opening report
+- `minimalTracker.sharedStoragePath`: optional shared SQLite storage root across IDE windows
 
 ## Command
 
