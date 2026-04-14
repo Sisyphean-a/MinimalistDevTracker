@@ -17,6 +17,7 @@ require('./gitClient.test');
 require('./gitDiffProvider.test');
 require('./storage.test');
 require('./dailyReportView.test');
+require('./reportViewModel.test');
 require('./reportScope.test');
 require('./trackerConfig.test');
 require('./storagePathResolver.test');

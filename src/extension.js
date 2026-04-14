@@ -138,13 +138,17 @@ function createLegacyMigrationRunner(storageRootPath, legacyStoragePath) {
   };
 }
 
-async function activate(context) {
-  const config = createTrackerConfigReader(vscode);
-  const normalizer = createPathNormalizer();
-  const gitClient = createGitClient();
-  const pathRegistryDeps = { gitClient, normalizer };
-  const pathRegistry = await buildPathRegistry(listWorkspaceFolderPaths(vscode.workspace.workspaceFolders), pathRegistryDeps);
-  let currentPathRegistry = pathRegistry;
+async function readStorageSnapshot(storageRootPath) {
+  const database = await openDatabase(path.join(storageRootPath, 'storage.db'));
+  const snapshot = {
+    legacyImportCompletedAt: database.getMeta('legacy_import_completed_at'),
+    sessionCount: database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count
+  };
+  database.close();
+  return snapshot;
+}
+
+async function createStorageRuntime(context, config) {
   const defaultSharedStoragePath = path.join(os.homedir(), DEFAULT_SHARED_STORAGE_DIR_NAME);
   const storageRootPath = resolveStorageRootPath({
     sharedStoragePath: config.getSharedStoragePath(),
@@ -157,33 +161,34 @@ async function activate(context) {
     storageRootPath,
     legacyStoragePath,
     migrationSourceDirs: [storageRootPath, legacyStoragePath],
-    readStorageSnapshot: async () => {
-      const database = await openDatabase(path.join(storageRootPath, 'storage.db'));
-      const snapshot = {
-        legacyImportCompletedAt: database.getMeta('legacy_import_completed_at'),
-        sessionCount: database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count
-      };
-      database.close();
-      return snapshot;
-    },
+    readStorageSnapshot: () => readStorageSnapshot(storageRootPath),
     migrateLegacyStorageData,
     createStorage
   });
-  const storage = await bootstrapStorage();
-  const gitDiffProvider = createGitDiffProvider(vscode, { gitClient, normalizer });
-  const tracker = createTracker(storage, gitDiffProvider);
-  const reportPanelController = createReportPanelController({
+  return {
+    legacyStoragePath,
+    runLegacyMigration,
+    storage: await bootstrapStorage(),
+    storageRootPath
+  };
+}
+
+function createReportController(context, config, tracker, storage, getCurrentPathRegistry) {
+  return createReportPanelController({
     vscode,
     context,
     reportViewType: REPORT_VIEW_TYPE,
     tracker,
     storage,
     shouldFlushBeforeReport: config.shouldFlushBeforeReport,
-    getReportRepoPaths: () => resolveReportRepoPaths(vscode.workspace.workspaceFolders, currentPathRegistry),
+    getReportRepoPaths: () => resolveReportRepoPaths(vscode.workspace.workspaceFolders, getCurrentPathRegistry()),
     renderDailyReportHtml,
     refreshIntervalMs: REFRESH_INTERVAL_MS,
     logError: reportRuntimeError
   });
+}
+
+function createRuntimeTracking(config, tracker, gitDiffProvider, pathRegistry, normalizer) {
   let runtimeTrackerRef = null;
   const commitWatcher = createCommitWatcher({
     normalizer,
@@ -201,13 +206,30 @@ async function activate(context) {
     commitWatcher,
     logError: reportRuntimeError
   });
-  const fileActivityWatcher = createFileActivityWatcher({
-    vscode,
-    roots: pathRegistry.getAllowedRoots(),
-    excludeGlobs: config.getExcludeGlobs(),
-    onFileActivity: (fsPath) => runtimeTrackerRef.recordPathActivity(fsPath),
-    logError: reportRuntimeError
-  });
+  return {
+    fileActivityWatcher: createFileActivityWatcher({
+      vscode,
+      roots: pathRegistry.getAllowedRoots(),
+      excludeGlobs: config.getExcludeGlobs(),
+      onFileActivity: (fsPath) => runtimeTrackerRef.recordPathActivity(fsPath),
+      logError: reportRuntimeError
+    }),
+    runtimeTracker: runtimeTrackerRef
+  };
+}
+
+async function activate(context) {
+  const config = createTrackerConfigReader(vscode);
+  const normalizer = createPathNormalizer();
+  const gitClient = createGitClient();
+  const pathRegistryDeps = { gitClient, normalizer };
+  const pathRegistry = await buildPathRegistry(listWorkspaceFolderPaths(vscode.workspace.workspaceFolders), pathRegistryDeps);
+  let currentPathRegistry = pathRegistry;
+  const storageRuntime = await createStorageRuntime(context, config);
+  const gitDiffProvider = createGitDiffProvider(vscode, { gitClient, normalizer });
+  const tracker = createTracker(storageRuntime.storage, gitDiffProvider);
+  const reportPanelController = createReportController(context, config, tracker, storageRuntime.storage, () => currentPathRegistry);
+  const { runtimeTracker, fileActivityWatcher } = createRuntimeTracking(config, tracker, gitDiffProvider, pathRegistry, normalizer);
 
   registerExtensionCommands({
     vscode,
@@ -215,15 +237,15 @@ async function activate(context) {
     reportCommandId: REPORT_COMMAND_ID,
     migrateCommandId: MIGRATE_STORAGE_COMMAND_ID,
     reportPanelController,
-    migrateLegacyStorageData: runLegacyMigration,
-    storageRootPath,
-    legacyStoragePath
+    migrateLegacyStorageData: storageRuntime.runLegacyMigration,
+    storageRootPath: storageRuntime.storageRootPath,
+    legacyStoragePath: storageRuntime.legacyStoragePath
   });
-  await wireGitIntegration(context, runtimeTrackerRef);
-  registerEditorListeners(context, runtimeTrackerRef);
+  await wireGitIntegration(context, runtimeTracker);
+  registerEditorListeners(context, runtimeTracker);
   registerConfigurationReload(context, {
     getExcludeGlobs: config.getExcludeGlobs,
-    runtimeTracker: runtimeTrackerRef,
+    runtimeTracker,
     fileActivityWatcher,
     pathRegistryDeps,
     onPathRegistryUpdated: (nextPathRegistry) => {

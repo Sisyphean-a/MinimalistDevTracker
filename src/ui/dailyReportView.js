@@ -8,10 +8,12 @@ const {
   aggregateByFileType,
   aggregateSummary,
   buildHourlyBuckets,
-  flattenSessions,
+  collectSessions,
   getActiveDays,
+  sortSessionsByEndTime,
   toProjectList
 } = require('./reportViewModel');
+const { REPORT_PAGE_STYLES } = require('./reportStyles');
 
 function escapeHtml(value) {
   return String(value)
@@ -141,8 +143,8 @@ function renderHeatlineCells(buckets) {
     .join('');
 }
 
-function renderHeatLineSection(projects, dateRangeStart, dateRangeEnd) {
-  const buckets = buildHourlyBuckets(projects, dateRangeStart, dateRangeEnd);
+function renderHeatLineSection(sessions, dateRangeStart, dateRangeEnd) {
+  const buckets = buildHourlyBuckets(sessions, dateRangeStart, dateRangeEnd);
   if (buckets.length === 0) {
     return '';
   }
@@ -186,8 +188,7 @@ function renderActiveDaysSection(days) {
   ].join('');
 }
 
-function renderSessionRows(projects) {
-  const sessions = flattenSessions(projects).slice(0, RECENT_SESSION_LIMIT);
+function renderSessionRows(sessions) {
   return sessions.map((session) => {
     const totalLoc = session.locAdded + session.locDeleted;
     return [
@@ -223,78 +224,67 @@ function renderEmptyHtml() {
   return '<html><body><h2>Minimalist Dev Tracker</h2><p>暂无统计数据</p></body></html>';
 }
 
-function renderDailyReportHtml(dailyData, options = {}) {
-  if (!dailyData || !dailyData.projects || Object.keys(dailyData.projects).length === 0) {
-    return renderEmptyHtml();
-  }
-
-  const refreshIntervalMs = options.refreshIntervalMs ?? 30_000;
-  const periodType = dailyData.periodType ?? 'rolling30';
+function buildReportSections(dailyData) {
   const projects = toProjectList(dailyData.projects);
   if (projects.length === 0) {
-    return renderEmptyHtml();
+    return null;
   }
 
-  const summary = aggregateSummary(projects);
-  const fileTypeStats = aggregateByFileType(projects);
-  const projectRows = renderProjectRows(projects);
-  const fileTypeRows = renderFileTypeRows(fileTypeStats);
-  const heatLineSection = renderHeatLineSection(projects, dailyData.dateRangeStart, dailyData.dateRangeEnd);
-  const activeDaysSection = renderActiveDaysSection(dailyData.days);
-  const sessionRows = renderSessionRows(projects);
+  const sessions = collectSessions(projects);
+  return {
+    activeDaysSection: renderActiveDaysSection(dailyData.days),
+    fileTypeRows: renderFileTypeRows(aggregateByFileType(projects)),
+    heatLineSection: renderHeatLineSection(sessions, dailyData.dateRangeStart, dailyData.dateRangeEnd),
+    projectRows: renderProjectRows(projects),
+    sessionRows: renderSessionRows(sortSessionsByEndTime(sessions).slice(0, RECENT_SESSION_LIMIT)),
+    summary: aggregateSummary(projects)
+  };
+}
+
+function renderReportHtml(dailyData, options, sections) {
+  const refreshIntervalMs = options.refreshIntervalMs ?? 30_000;
+  const periodType = dailyData.periodType ?? 'rolling30';
   const rangeLabel = dailyData.dateRangeStart && dailyData.dateRangeEnd
     ? `${escapeHtml(dailyData.dateRangeStart)} ~ ${escapeHtml(dailyData.dateRangeEnd)}`
     : '';
-
   return [
     '<html>',
-    '<head><meta charset="utf-8"><style>',
-    ':root{--panel:#ffffff;--line:#d7ddd4;--text:#1d3430;--muted:#5a6f69;--accent:#0f7b62;}',
-    'body{margin:0;background:linear-gradient(180deg,#e8f3ef,#f6f7f3);font-family:"Segoe UI",Arial,sans-serif;color:var(--text);padding:16px;}',
-    '.header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;}',
-    '.title{font-size:30px;font-weight:700;margin:0;}',
-    '.range-picker{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);}',
-    '.range-picker select{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px;color:var(--text);font:inherit;}',
-    '.muted{color:var(--muted);font-size:12px;}',
-    '.btn{border:0;background:var(--accent);color:#fff;padding:10px 14px;border-radius:8px;cursor:pointer;font-weight:600;}',
-    '.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px;}',
-    '.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;}',
-    '.card h4{margin:0 0 6px 0;color:var(--muted);font-size:12px;}',
-    '.card p{margin:0;font-size:20px;font-weight:700;}',
-    '.note{margin:0 0 12px 0;}',
-    '.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px;}',
-    'h3{margin:0 0 8px 0;font-size:20px;}',
-    'table{width:100%;border-collapse:collapse;}',
-    'th,td{border:1px solid var(--line);padding:8px;text-align:left;font-size:13px;}',
-    'th{background:#eef3f2;}',
-    '.heatline-labels{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);margin-bottom:10px;}',
-    '.heatline-track{border-radius:999px;border:1px solid rgba(15,123,98,0.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.25);padding:4px;background:#f4f8f6;overflow:hidden;}',
-    '.heatline-grid{display:grid;gap:1px;}',
-    '.heatline-cell{display:block;height:20px;min-width:0;}',
-    '</style></head>',
+    `<head><meta charset="utf-8"><style>${REPORT_PAGE_STYLES}</style></head>`,
     '<body>',
     '<div class="header">',
     `<div><h2 class="title">Minimalist Dev Tracker</h2><div class="muted">${escapeHtml(dailyData.periodLabel ?? periodType)}${rangeLabel ? ` · ${rangeLabel}` : ''}</div></div>`,
     `<div style="display:flex;align-items:center;gap:10px;">${renderPeriodSelector(periodType)}<button id="refresh-btn" class="btn">立即刷新</button></div>`,
     '</div>',
     `<p class="muted">自动刷新间隔：${escapeHtml(Math.floor(refreshIntervalMs / 1000))} 秒</p>`,
-    renderSummaryCards(summary),
+    renderSummaryCards(sections.summary),
     renderUntrackedExplanation(),
-    heatLineSection,
-    activeDaysSection,
+    sections.heatLineSection,
+    sections.activeDaysSection,
     '<section class="panel"><h3>仓库 + 分支统计</h3>',
     '<table><thead><tr><th>仓库</th><th>分支</th><th>活跃时长</th><th>已跟踪变更</th><th>未纳入 Git 的文件</th><th>总变更行</th><th>会话数</th></tr></thead>',
-    `<tbody>${projectRows}</tbody></table></section>`,
+    `<tbody>${sections.projectRows}</tbody></table></section>`,
     '<section class="panel"><h3>按文件类型统计</h3>',
     '<table><thead><tr><th>文件类型</th><th>新增代码行</th><th>删除代码行</th><th>总变更行</th></tr></thead>',
-    `<tbody>${fileTypeRows || '<tr><td colspan="4">暂无按类型统计数据</td></tr>'}</tbody></table></section>`,
+    `<tbody>${sections.fileTypeRows || '<tr><td colspan="4">暂无按类型统计数据</td></tr>'}</tbody></table></section>`,
     '<section class="panel"><h3>最近会话</h3>',
     '<table><thead><tr><th>仓库</th><th>分支</th><th>开始</th><th>结束</th><th>时长</th><th>已跟踪变更</th><th>未纳入 Git 的文件</th><th>总变更行</th></tr></thead>',
-    `<tbody>${sessionRows || '<tr><td colspan="8">暂无会话数据</td></tr>'}</tbody></table></section>`,
+    `<tbody>${sections.sessionRows || '<tr><td colspan="8">暂无会话数据</td></tr>'}</tbody></table></section>`,
     createRefreshScript(),
     '</body>',
     '</html>'
   ].join('');
+}
+
+function renderDailyReportHtml(dailyData, options = {}) {
+  if (!dailyData || !dailyData.projects || Object.keys(dailyData.projects).length === 0) {
+    return renderEmptyHtml();
+  }
+
+  const sections = buildReportSections(dailyData);
+  if (!sections) {
+    return renderEmptyHtml();
+  }
+  return renderReportHtml(dailyData, options, sections);
 }
 
 module.exports = {
