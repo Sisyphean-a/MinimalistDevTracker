@@ -23,45 +23,50 @@ function createProject(overrides = {}) {
   };
 }
 
-test('renderDailyReportHtml renders a continuous heatline with range labels and no inline values', () => {
+test('renderDailyReportHtml renders an hour-bucket heat band with range labels', () => {
   const html = renderDailyReportHtml({
     periodType: 'rolling30',
     periodLabel: '最近30天',
-    dateRangeStart: '2026-03-11',
+    dateRangeStart: '2026-04-08',
     dateRangeEnd: '2026-04-09',
     projects: {
       'f:/repo/main||main': createProject({
         sessions: [
           {
             branch: 'main',
-            startTime: Date.parse('2026-04-08T01:00:00.000Z'),
-            endTime: Date.parse('2026-04-08T02:00:00.000Z'),
-            durationMs: 1_500,
+            startTime: Date.parse('2026-04-08T01:15:00.000Z'),
+            endTime: Date.parse('2026-04-08T03:15:00.000Z'),
+            durationMs: 7_200_000,
             locAdded: 2,
             locDeleted: 1
+          },
+          {
+            branch: 'main',
+            startTime: Date.parse('2026-04-09T00:00:00.000Z'),
+            endTime: Date.parse('2026-04-09T01:00:00.000Z'),
+            durationMs: 3_600_000,
+            locAdded: 5,
+            locDeleted: 2
           }
         ]
       })
     },
     days: [
-      { date: '2026-03-11', totalActiveTimeMs: 0, totalLocAdded: 0, totalLocDeleted: 0, totalLoc: 0 },
-      { date: '2026-04-08', totalActiveTimeMs: 1_500, totalLocAdded: 2, totalLocDeleted: 1, totalLoc: 3 },
-      { date: '2026-04-09', totalActiveTimeMs: 3_700, totalLocAdded: 5, totalLocDeleted: 2, totalLoc: 7 }
+      { date: '2026-04-08', totalActiveTimeMs: 7_200_000, totalLocAdded: 2, totalLocDeleted: 1, totalLoc: 3 },
+      { date: '2026-04-09', totalActiveTimeMs: 3_600_000, totalLocAdded: 5, totalLocDeleted: 2, totalLoc: 7 }
     ]
   });
 
   assert.match(html, /整体热力线/);
-  assert.match(html, /活跃趋势/);
-  assert.match(html, /2026-03-11/);
+  assert.match(html, /按小时切分/);
+  assert.match(html, /2026-04-08/);
   assert.match(html, /2026-04-09/);
-  assert.match(html, /linear-gradient\(90deg,/);
-  assert.match(html, /heatline-track/);
-  assert.doesNotMatch(html, /heat-cell/);
-  assert.doesNotMatch(html, /1500秒/);
-  assert.doesNotMatch(html, /3700秒/);
+  assert.match(html, /heatline-grid/);
+  assert.equal((html.match(/class="heatline-cell"/g) ?? []).length, 48);
+  assert.doesNotMatch(html, /linear-gradient\(90deg,/);
 });
 
-test('renderDailyReportHtml renders only non-zero day rows in the daily stats table', () => {
+test('renderDailyReportHtml renders only non-zero day rows with change summary in the daily stats table', () => {
   const html = renderDailyReportHtml({
     periodType: 'month',
     periodLabel: '本月',
@@ -78,13 +83,35 @@ test('renderDailyReportHtml renders only non-zero day rows in the daily stats ta
   });
 
   assert.match(html, /有值日期统计/);
-  assert.match(html, /<th>日期<\/th><th>总时长<\/th><th>总行数<\/th>/);
+  assert.match(html, /<th>日期<\/th><th>总时长<\/th><th>总行数<\/th><th>变更行数<\/th>/);
   assert.match(html, /2026-04-02/);
   assert.match(html, /2026-04-01/);
   assert.match(html, /0小时53分39秒/);
   assert.match(html, /0小时57分13秒/);
   assert.match(html, /12<\/td>/);
+  assert.match(html, /\+6\/-4/);
+  assert.match(html, /\+10\/-2/);
   assert.doesNotMatch(html, /2026-04-03/);
+});
+
+test('renderDailyReportHtml clarifies untracked metrics and avoids duplicate auto refresh in webview script', () => {
+  const html = renderDailyReportHtml({
+    periodType: 'month',
+    periodLabel: '本月',
+    dateRangeStart: '2026-04-01',
+    dateRangeEnd: '2026-04-09',
+    projects: {
+      'f:/repo/main||main': createProject()
+    },
+    days: [
+      { date: '2026-04-01', totalActiveTimeMs: 3_433_000, totalLocAdded: 10, totalLocDeleted: 2, totalLoc: 12 }
+    ]
+  });
+
+  assert.match(html, /未纳入 Git 的文件/);
+  assert.match(html, /按当前文件总行数增量统计/);
+  assert.doesNotMatch(html, /未跟踪新文件/);
+  assert.doesNotMatch(html, /setInterval\(/);
 });
 
 test('renderDailyReportHtml limits session detail rows to the most recent entries', () => {

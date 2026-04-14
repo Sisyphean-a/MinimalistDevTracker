@@ -4,6 +4,14 @@ const REPORT_PERIOD_OPTIONS = [
   { value: 'month', label: '本月' }
 ];
 const HEATLINE_COLORS = ['#edf3f1', '#d4e8df', '#8ecdb6', '#2fa17f', '#0f7b62'];
+const {
+  aggregateByFileType,
+  aggregateSummary,
+  buildHourlyBuckets,
+  flattenSessions,
+  getActiveDays,
+  toProjectList
+} = require('./reportViewModel');
 
 function escapeHtml(value) {
   return String(value)
@@ -44,82 +52,6 @@ function formatDateTime(timestamp) {
   return `${yyyy}-${mm}-${dd} ${formatTime(timestamp)}`;
 }
 
-function parseProjectKey(projectKey) {
-  const [repoPath, branch] = String(projectKey).split('||');
-  return {
-    repoPath: repoPath || projectKey,
-    branch: branch || 'unknown'
-  };
-}
-
-function normalizeProject(projectKey, project) {
-  const keyParts = parseProjectKey(projectKey);
-  return {
-    repoPath: project?.repoPath ?? keyParts.repoPath,
-    branch: project?.branch ?? keyParts.branch,
-    totalActiveTimeMs: project?.totalActiveTimeMs ?? 0,
-    trackedLocAdded: project?.trackedLocAdded ?? project?.totalLocAdded ?? 0,
-    trackedLocDeleted: project?.trackedLocDeleted ?? project?.totalLocDeleted ?? 0,
-    untrackedLocAdded: project?.untrackedLocAdded ?? 0,
-    untrackedLocDeleted: project?.untrackedLocDeleted ?? 0,
-    totalLocAdded: project?.totalLocAdded ?? 0,
-    totalLocDeleted: project?.totalLocDeleted ?? 0,
-    locByFileType: project?.locByFileType ?? {},
-    sessions: Array.isArray(project?.sessions) ? project.sessions : []
-  };
-}
-
-function toProjectList(projects) {
-  return Object.entries(projects ?? {})
-    .map(([projectKey, project]) => normalizeProject(projectKey, project))
-    .filter((project) => {
-      return (project.totalLocAdded + project.totalLocDeleted) > 0
-        || project.sessions.some((session) => ((session.locAdded ?? 0) + (session.locDeleted ?? 0)) > 0);
-    });
-}
-
-function mergeByFileType(output, locByFileType) {
-  Object.entries(locByFileType ?? {}).forEach(([fileType, metrics]) => {
-    const existing = output[fileType] ?? { locAdded: 0, locDeleted: 0 };
-    output[fileType] = {
-      locAdded: existing.locAdded + (metrics.locAdded ?? 0),
-      locDeleted: existing.locDeleted + (metrics.locDeleted ?? 0)
-    };
-  });
-}
-
-function aggregateSummary(projects) {
-  return projects.reduce((acc, project) => {
-    return {
-      totalActiveTimeMs: acc.totalActiveTimeMs + project.totalActiveTimeMs,
-      trackedLocAdded: acc.trackedLocAdded + project.trackedLocAdded,
-      trackedLocDeleted: acc.trackedLocDeleted + project.trackedLocDeleted,
-      untrackedLocAdded: acc.untrackedLocAdded + project.untrackedLocAdded,
-      untrackedLocDeleted: acc.untrackedLocDeleted + project.untrackedLocDeleted,
-      totalLocAdded: acc.totalLocAdded + project.totalLocAdded,
-      totalLocDeleted: acc.totalLocDeleted + project.totalLocDeleted,
-      sessionCount: acc.sessionCount + project.sessions.length
-    };
-  }, {
-    totalActiveTimeMs: 0,
-    trackedLocAdded: 0,
-    trackedLocDeleted: 0,
-    untrackedLocAdded: 0,
-    untrackedLocDeleted: 0,
-    totalLocAdded: 0,
-    totalLocDeleted: 0,
-    sessionCount: 0
-  });
-}
-
-function aggregateByFileType(projects) {
-  const output = {};
-  projects.forEach((project) => {
-    mergeByFileType(output, project.locByFileType);
-  });
-  return output;
-}
-
 function renderSummaryCards(summary) {
   const totalLoc = summary.totalLocAdded + summary.totalLocDeleted;
   return [
@@ -128,9 +60,13 @@ function renderSummaryCards(summary) {
     `<article class="card"><h4>会话数</h4><p>${escapeHtml(summary.sessionCount)}</p></article>`,
     `<article class="card"><h4>总变更行</h4><p>${escapeHtml(totalLoc)}</p></article>`,
     `<article class="card"><h4>已跟踪变更</h4><p>+${escapeHtml(summary.trackedLocAdded)} / -${escapeHtml(summary.trackedLocDeleted)}</p></article>`,
-    `<article class="card"><h4>未跟踪新文件</h4><p>+${escapeHtml(summary.untrackedLocAdded)} / -${escapeHtml(summary.untrackedLocDeleted)}</p></article>`,
+    `<article class="card"><h4>未纳入 Git 的文件</h4><p>+${escapeHtml(summary.untrackedLocAdded)} / -${escapeHtml(summary.untrackedLocDeleted)}</p></article>`,
     '</section>'
   ].join('');
+}
+
+function renderUntrackedExplanation() {
+  return '<p class="muted note">“未纳入 Git 的文件”按当前文件总行数增量统计，不代表全部未提交改动。</p>';
 }
 
 function renderProjectRows(projects) {
@@ -195,44 +131,32 @@ function getHeatlineColor(ratio) {
   return HEATLINE_COLORS[index];
 }
 
-function buildHeatlineGradient(days) {
-  const maxDurationMs = days.reduce((maxValue, day) => Math.max(maxValue, day.totalActiveTimeMs ?? 0), 0);
-  const totalDays = days.length;
-  const stops = days.flatMap((day, index) => {
-    const start = ((index / totalDays) * 100).toFixed(2);
-    const end = (((index + 1) / totalDays) * 100).toFixed(2);
-    const durationMs = day.totalActiveTimeMs ?? 0;
-    const ratio = maxDurationMs === 0 ? 0 : durationMs / maxDurationMs;
-    const color = getHeatlineColor(ratio);
-    return [`${color} ${start}%`, `${color} ${end}%`];
-  });
-  return `linear-gradient(90deg, ${stops.join(', ')})`;
+function renderHeatlineCells(buckets) {
+  const maxDurationMs = buckets.reduce((maxValue, bucket) => Math.max(maxValue, bucket.totalActiveTimeMs ?? 0), 0);
+  return buckets
+    .map((bucket) => {
+      const ratio = maxDurationMs === 0 ? 0 : (bucket.totalActiveTimeMs ?? 0) / maxDurationMs;
+      return `<span class="heatline-cell" style="background:${escapeHtml(getHeatlineColor(ratio))}"></span>`;
+    })
+    .join('');
 }
 
-function renderHeatLineSection(days, dateRangeStart, dateRangeEnd) {
-  if (!Array.isArray(days) || days.length === 0) {
+function renderHeatLineSection(projects, dateRangeStart, dateRangeEnd) {
+  const buckets = buildHourlyBuckets(projects, dateRangeStart, dateRangeEnd);
+  if (buckets.length === 0) {
     return '';
   }
 
   return [
     '<section class="panel"><h3>整体热力线</h3>',
-    '<p class="muted">活跃趋势</p>',
+    '<p class="muted">按小时切分，颜色越深表示活跃越高</p>',
     '<div class="heatline-labels">',
-    `<span>${escapeHtml(dateRangeStart ?? days[0]?.date ?? '')}</span>`,
-    `<span>${escapeHtml(dateRangeEnd ?? days[days.length - 1]?.date ?? '')}</span>`,
+    `<span>${escapeHtml(dateRangeStart ?? '')}</span>`,
+    `<span>${escapeHtml(dateRangeEnd ?? '')}</span>`,
     '</div>',
-    `<div class="heatline-track" style="background:${escapeHtml(buildHeatlineGradient(days))}"></div>`,
+    `<div class="heatline-track"><div class="heatline-grid" style="grid-template-columns:repeat(${escapeHtml(buckets.length)}, minmax(0, 1fr));">${renderHeatlineCells(buckets)}</div></div>`,
     '</section>'
   ].join('');
-}
-
-function getActiveDays(days) {
-  if (!Array.isArray(days)) {
-    return [];
-  }
-  return days
-    .filter((day) => ((day.totalActiveTimeMs ?? 0) > 0) || ((day.totalLoc ?? ((day.totalLocAdded ?? 0) + (day.totalLocDeleted ?? 0))) > 0))
-    .sort((left, right) => right.date.localeCompare(left.date));
 }
 
 function renderActiveDayRows(days) {
@@ -243,6 +167,7 @@ function renderActiveDayRows(days) {
       `<td>${escapeHtml(day.date)}</td>`,
       `<td>${escapeHtml(formatDuration(day.totalActiveTimeMs ?? 0))}</td>`,
       `<td>${escapeHtml(totalLoc)}</td>`,
+      `<td>+${escapeHtml(day.totalLocAdded ?? 0)}/-${escapeHtml(day.totalLocDeleted ?? 0)}</td>`,
       '</tr>'
     ].join('');
   }).join('');
@@ -252,35 +177,13 @@ function renderActiveDaysSection(days) {
   const activeDays = getActiveDays(days);
   const rows = activeDays.length > 0
     ? renderActiveDayRows(activeDays)
-    : '<tr><td colspan="3">当前范围内暂无活跃日期数据</td></tr>';
+    : '<tr><td colspan="4">当前范围内暂无活跃日期数据</td></tr>';
 
   return [
     '<section class="panel"><h3>有值日期统计</h3>',
-    '<table><thead><tr><th>日期</th><th>总时长</th><th>总行数</th></tr></thead>',
+    '<table><thead><tr><th>日期</th><th>总时长</th><th>总行数</th><th>变更行数</th></tr></thead>',
     `<tbody>${rows}</tbody></table></section>`
   ].join('');
-}
-
-function flattenSessions(projects) {
-  const output = [];
-  projects.forEach((project) => {
-    project.sessions.forEach((session) => {
-      output.push({
-        repoPath: project.repoPath,
-        branch: session.branch ?? project.branch,
-        startTime: session.startTime,
-        endTime: session.endTime,
-        durationMs: session.durationMs ?? 0,
-        trackedLocAdded: session.trackedLocAdded ?? session.locAdded ?? 0,
-        trackedLocDeleted: session.trackedLocDeleted ?? session.locDeleted ?? 0,
-        untrackedLocAdded: session.untrackedLocAdded ?? 0,
-        untrackedLocDeleted: session.untrackedLocDeleted ?? 0,
-        locAdded: session.locAdded ?? 0,
-        locDeleted: session.locDeleted ?? 0
-      });
-    });
-  });
-  return output.sort((left, right) => (right.endTime ?? 0) - (left.endTime ?? 0));
 }
 
 function renderSessionRows(projects) {
@@ -302,7 +205,7 @@ function renderSessionRows(projects) {
   }).join('');
 }
 
-function createRefreshScript(refreshIntervalMs) {
+function createRefreshScript() {
   return [
     '<script>',
     '(function(){',
@@ -311,7 +214,6 @@ function createRefreshScript(refreshIntervalMs) {
     'const select = document.getElementById("range-select");',
     'if (btn && vscode) { btn.addEventListener("click", function(){ vscode.postMessage({ type: "refresh-report" }); }); }',
     'if (select && vscode) { select.addEventListener("change", function(){ vscode.postMessage({ type: "refresh-report", periodType: select.value }); }); }',
-    `if (vscode) { setInterval(function(){ vscode.postMessage({ type: "refresh-report" }); }, ${refreshIntervalMs}); }`,
     '})();',
     '</script>'
   ].join('');
@@ -337,7 +239,7 @@ function renderDailyReportHtml(dailyData, options = {}) {
   const fileTypeStats = aggregateByFileType(projects);
   const projectRows = renderProjectRows(projects);
   const fileTypeRows = renderFileTypeRows(fileTypeStats);
-  const heatLineSection = renderHeatLineSection(dailyData.days, dailyData.dateRangeStart, dailyData.dateRangeEnd);
+  const heatLineSection = renderHeatLineSection(projects, dailyData.dateRangeStart, dailyData.dateRangeEnd);
   const activeDaysSection = renderActiveDaysSection(dailyData.days);
   const sessionRows = renderSessionRows(projects);
   const rangeLabel = dailyData.dateRangeStart && dailyData.dateRangeEnd
@@ -359,13 +261,16 @@ function renderDailyReportHtml(dailyData, options = {}) {
     '.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;}',
     '.card h4{margin:0 0 6px 0;color:var(--muted);font-size:12px;}',
     '.card p{margin:0;font-size:20px;font-weight:700;}',
+    '.note{margin:0 0 12px 0;}',
     '.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px;}',
     'h3{margin:0 0 8px 0;font-size:20px;}',
     'table{width:100%;border-collapse:collapse;}',
     'th,td{border:1px solid var(--line);padding:8px;text-align:left;font-size:13px;}',
     'th{background:#eef3f2;}',
     '.heatline-labels{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);margin-bottom:10px;}',
-    '.heatline-track{height:28px;border-radius:999px;border:1px solid rgba(15,123,98,0.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.25);}',
+    '.heatline-track{border-radius:999px;border:1px solid rgba(15,123,98,0.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.25);padding:4px;background:#f4f8f6;overflow:hidden;}',
+    '.heatline-grid{display:grid;gap:1px;}',
+    '.heatline-cell{display:block;height:20px;min-width:0;}',
     '</style></head>',
     '<body>',
     '<div class="header">',
@@ -374,18 +279,19 @@ function renderDailyReportHtml(dailyData, options = {}) {
     '</div>',
     `<p class="muted">自动刷新间隔：${escapeHtml(Math.floor(refreshIntervalMs / 1000))} 秒</p>`,
     renderSummaryCards(summary),
+    renderUntrackedExplanation(),
     heatLineSection,
     activeDaysSection,
     '<section class="panel"><h3>仓库 + 分支统计</h3>',
-    '<table><thead><tr><th>仓库</th><th>分支</th><th>活跃时长</th><th>已跟踪变更</th><th>未跟踪新文件</th><th>总变更行</th><th>会话数</th></tr></thead>',
+    '<table><thead><tr><th>仓库</th><th>分支</th><th>活跃时长</th><th>已跟踪变更</th><th>未纳入 Git 的文件</th><th>总变更行</th><th>会话数</th></tr></thead>',
     `<tbody>${projectRows}</tbody></table></section>`,
     '<section class="panel"><h3>按文件类型统计</h3>',
     '<table><thead><tr><th>文件类型</th><th>新增代码行</th><th>删除代码行</th><th>总变更行</th></tr></thead>',
     `<tbody>${fileTypeRows || '<tr><td colspan="4">暂无按类型统计数据</td></tr>'}</tbody></table></section>`,
     '<section class="panel"><h3>最近会话</h3>',
-    '<table><thead><tr><th>仓库</th><th>分支</th><th>开始</th><th>结束</th><th>时长</th><th>已跟踪变更</th><th>未跟踪新文件</th><th>总变更行</th></tr></thead>',
+    '<table><thead><tr><th>仓库</th><th>分支</th><th>开始</th><th>结束</th><th>时长</th><th>已跟踪变更</th><th>未纳入 Git 的文件</th><th>总变更行</th></tr></thead>',
     `<tbody>${sessionRows || '<tr><td colspan="8">暂无会话数据</td></tr>'}</tbody></table></section>`,
-    createRefreshScript(refreshIntervalMs),
+    createRefreshScript(),
     '</body>',
     '</html>'
   ].join('');
