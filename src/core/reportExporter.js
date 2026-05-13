@@ -285,7 +285,7 @@ function buildOfflineHtml(payload) {
 }
 
 async function loadDefaultEchartsSource() {
-  const sourcePath = require.resolve('echarts/dist/echarts.min.js');
+  const sourcePath = path.join(__dirname, '..', '..', 'assets', 'echarts.min.js');
   return fs.readFile(sourcePath, 'utf8');
 }
 

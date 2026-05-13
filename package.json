@@ -59,7 +59,6 @@
     "compile": "echo compile-skipped"
   },
   "dependencies": {
-    "echarts": "^5.5.1",
     "sql.js": "^1.14.1"
   }
 }
