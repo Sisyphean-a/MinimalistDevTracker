@@ -16,6 +16,7 @@ require('./pathKey.test');
 require('./gitClient.test');
 require('./gitDiffProvider.test');
 require('./storage.test');
+require('./storage.reportExport.test');
 require('./dailyReportView.test');
 require('./reportViewModel.test');
 require('./reportScope.test');

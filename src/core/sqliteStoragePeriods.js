@@ -3,7 +3,11 @@ const { mergeLocByFileType } = require('./sqliteStorageModels');
 
 const REPORT_PERIOD_LABELS = {
   rolling30: '最近30天',
-  month: '本月'
+  month: '本月',
+  rolling90: '最近3个月',
+  rolling180: '最近半年',
+  rolling365: '最近1年',
+  all: '全部'
 };
 
 function parseDateKey(dateKey) {
@@ -22,6 +26,21 @@ function buildDateRange(endDateKey, days) {
     const delta = index - (days - 1);
     return addDaysToDateKey(endDateKey, delta);
   });
+}
+
+function buildInclusiveDateRange(startDateKey, endDateKey) {
+  const dates = [];
+  let current = startDateKey;
+
+  while (current <= endDateKey) {
+    dates.push(current);
+    if (current === endDateKey) {
+      break;
+    }
+    current = addDaysToDateKey(current, 1);
+  }
+
+  return dates;
 }
 
 function buildDayRecord(byDate, dateKey) {
@@ -130,7 +149,10 @@ function normalizeTrendRequest(input) {
 function normalizeReportRequest(input) {
   return {
     periodType: input?.periodType ?? input?.rangeType ?? input?.period ?? 'rolling30',
-    repoPaths: input?.repoPaths ?? null
+    repoPaths: input?.repoPaths ?? null,
+    startDate: input?.startDate ?? null,
+    endDate: input?.endDate ?? null,
+    branch: input?.branch ?? null
   };
 }
 
@@ -141,7 +163,10 @@ function normalizeDailyRequest(input) {
 }
 
 function normalizeReportPeriod(periodType) {
-  return periodType === 'month' ? 'month' : 'rolling30';
+  if (REPORT_PERIOD_LABELS[periodType]) {
+    return periodType;
+  }
+  return 'rolling30';
 }
 
 function buildReportPeriodStartDateKey(periodType, todayDateKey) {
@@ -150,21 +175,21 @@ function buildReportPeriodStartDateKey(periodType, todayDateKey) {
     start.setDate(1);
     return toLocalDateKey(start.getTime());
   }
+  if (periodType === 'rolling90') {
+    return addDaysToDateKey(todayDateKey, -89);
+  }
+  if (periodType === 'rolling180') {
+    return addDaysToDateKey(todayDateKey, -179);
+  }
+  if (periodType === 'rolling365') {
+    return addDaysToDateKey(todayDateKey, -364);
+  }
   return addDaysToDateKey(todayDateKey, -29);
 }
 
 function buildReportDateRange(periodType, todayDateKey) {
   const startDateKey = buildReportPeriodStartDateKey(periodType, todayDateKey);
-  const dates = [];
-  let current = startDateKey;
-  while (current <= todayDateKey) {
-    dates.push(current);
-    if (current === todayDateKey) {
-      break;
-    }
-    current = addDaysToDateKey(current, 1);
-  }
-  return dates;
+  return buildInclusiveDateRange(startDateKey, todayDateKey);
 }
 
 module.exports = {
@@ -172,6 +197,7 @@ module.exports = {
   addDaysToDateKey,
   buildDateRange,
   buildDayRecord,
+  buildInclusiveDateRange,
   buildReportDateRange,
   buildTrendWindow,
   normalizeDailyRequest,

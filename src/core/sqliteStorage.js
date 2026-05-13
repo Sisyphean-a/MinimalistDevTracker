@@ -3,6 +3,7 @@ const {
   REPORT_PERIOD_LABELS,
   addDaysToDateKey,
   buildDayRecord,
+  buildInclusiveDateRange,
   buildReportDateRange,
   buildTrendWindow,
   normalizeDailyRequest,
@@ -170,21 +171,44 @@ function appendRowToDayMap(dayMap, row) {
   });
 }
 
+function buildBranchClause(branch) {
+  if (!branch || typeof branch !== 'string') {
+    return { clause: '', params: [] };
+  }
+
+  return {
+    clause: ' AND branch = ?',
+    params: [branch]
+  };
+}
+
 function createReadReportData(databasePromise, now) {
   return async function readReportData(input = {}) {
     const request = normalizeReportRequest(input);
     const periodType = normalizeReportPeriod(request.periodType);
     const todayDateKey = toDateKey(now());
-    const dateRange = buildReportDateRange(periodType, todayDateKey);
+    const database = await databasePromise;
+    const earliest = database.prepare('SELECT MIN(date_key) AS earliestDateKey FROM sessions').get();
+    const explicitRange = request.startDate && request.endDate;
+    const dateRange = explicitRange
+      ? buildInclusiveDateRange(request.startDate, request.endDate)
+      : (periodType === 'all'
+        ? buildInclusiveDateRange(earliest?.earliestDateKey ?? todayDateKey, todayDateKey)
+        : buildReportDateRange(periodType, todayDateKey));
     const dateRangeStart = dateRange[0] ?? todayDateKey;
     const repoFilter = buildRepoPathClause(request.repoPaths);
-    const database = await databasePromise;
+    const branchFilter = buildBranchClause(request.branch);
     const rows = database.prepare(`
       SELECT *
       FROM sessions
-      WHERE date_key >= ? AND date_key <= ?${repoFilter.clause}
+      WHERE date_key >= ? AND date_key <= ?${repoFilter.clause}${branchFilter.clause}
       ORDER BY date_key ASC, start_time ASC, id ASC
-    `).all(dateRangeStart, todayDateKey, ...repoFilter.params);
+    `).all(
+      dateRangeStart,
+      dateRange[dateRange.length - 1] ?? todayDateKey,
+      ...repoFilter.params,
+      ...branchFilter.params
+    );
 
     const dayMap = new Map(dateRange.map((dateKey) => [dateKey, buildDayRecord({}, dateKey)]));
     const projectMap = new Map();
