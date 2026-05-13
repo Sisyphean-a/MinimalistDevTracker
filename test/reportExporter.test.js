@@ -17,11 +17,18 @@ function createPayload() {
       repoPaths: ['f:/repo/main'],
       branchMode: 'current',
       branchName: 'main',
+      requestedStartDate: '2026-02-01',
+      requestedEndDate: '2026-05-13',
       startDate: '2026-04-14',
-      endDate: '2026-05-13'
+      endDate: '2026-05-13',
+      sessionSizeThreshold: 50,
+      showProjectContribution: false,
+      showBranchContribution: false
     },
     summary: {
       totalActiveTimeMs: 3_600_000,
+      totalTrackedLoc: 9,
+      totalUntrackedLoc: 1,
       totalTrackedLocAdded: 7,
       totalTrackedLocDeleted: 2,
       totalUntrackedLocAdded: 1,
@@ -38,13 +45,65 @@ function createPayload() {
       {
         date: '2026-05-13',
         totalActiveTimeMs: 3_600_000,
+        trackedLocAdded: 7,
+        trackedLocDeleted: 2,
+        untrackedLocAdded: 1,
+        untrackedLocDeleted: 0,
         totalLocAdded: 8,
         totalLocDeleted: 2,
         totalLoc: 10
       }
     ],
-    projects: [],
-    branches: [],
+    projects: [
+      {
+        repoPath: 'f:/repo/main',
+        totalActiveTimeMs: 3_600_000,
+        trackedLocAdded: 7,
+        trackedLocDeleted: 2,
+        untrackedLocAdded: 1,
+        untrackedLocDeleted: 0,
+        totalLocAdded: 8,
+        totalLocDeleted: 2,
+        trackedTotalLoc: 9,
+        untrackedTotalLoc: 1,
+        totalLoc: 10
+      }
+    ],
+    branches: [
+      {
+        branch: 'main',
+        totalActiveTimeMs: 3_600_000,
+        trackedLocAdded: 7,
+        trackedLocDeleted: 2,
+        untrackedLocAdded: 1,
+        untrackedLocDeleted: 0,
+        totalLocAdded: 8,
+        totalLocDeleted: 2,
+        trackedTotalLoc: 9,
+        untrackedTotalLoc: 1,
+        totalLoc: 10
+      }
+    ],
+    fileTypes: [
+      {
+        fileType: 'js',
+        trackedLocAdded: 7,
+        trackedLocDeleted: 2,
+        untrackedLocAdded: 0,
+        untrackedLocDeleted: 0,
+        locAdded: 7,
+        locDeleted: 2
+      },
+      {
+        fileType: 'md',
+        trackedLocAdded: 0,
+        trackedLocDeleted: 0,
+        untrackedLocAdded: 1,
+        untrackedLocDeleted: 0,
+        locAdded: 1,
+        locDeleted: 0
+      }
+    ],
     sessions: [
       {
         repoPath: 'f:/repo/main',
@@ -57,7 +116,26 @@ function createPayload() {
         untrackedLocAdded: 1,
         untrackedLocDeleted: 0,
         locAdded: 8,
-        locDeleted: 2
+        locDeleted: 2,
+        trackedTotalLoc: 9,
+        untrackedTotalLoc: 1,
+        totalLoc: 10
+      },
+      {
+        repoPath: 'f:/repo/main',
+        branch: 'main',
+        startTime: Date.parse('2026-05-12T01:00:00.000Z'),
+        endTime: Date.parse('2026-05-12T02:00:00.000Z'),
+        durationMs: 3_600_000,
+        trackedLocAdded: 60,
+        trackedLocDeleted: 0,
+        untrackedLocAdded: 0,
+        untrackedLocDeleted: 0,
+        locAdded: 60,
+        locDeleted: 0,
+        trackedTotalLoc: 60,
+        untrackedTotalLoc: 0,
+        totalLoc: 60
       }
     ]
   };
@@ -121,14 +199,28 @@ test('report exporter writes offline html package with local assets and script p
   });
 
   const html = await fs.readFile(path.join(outputDir, 'index.html'), 'utf8');
+  const trackedHtml = await fs.readFile(path.join(outputDir, 'report-git-tracked.html'), 'utf8');
+  const totalHtml = await fs.readFile(path.join(outputDir, 'report-total.html'), 'utf8');
   const script = await fs.readFile(path.join(outputDir, 'report-data.js'), 'utf8');
   const echarts = await fs.readFile(path.join(outputDir, 'assets', 'echarts.min.js'), 'utf8');
+  const css = await fs.readFile(path.join(outputDir, 'assets', 'report.css'), 'utf8');
 
-  assert.match(html, /assets\/echarts\.min\.js/);
-  assert.match(html, /report-data\.js/);
+  assert.match(html, /report-git-tracked\.html/);
+  assert.match(html, /report-total\.html/);
+  assert.match(trackedHtml, /纯 Git 跟踪口径/);
+  assert.match(totalHtml, /包含未跟踪文件总量口径/);
+  assert.match(trackedHtml, /单次代码改动行数分布（区间次数）/);
+  assert.match(trackedHtml, /单次代码改动行数分布（区间总代码行数）/);
+  assert.match(trackedHtml, /单次代码改动行数分布（区间总花费时间）/);
+  assert.doesNotMatch(trackedHtml, /单次改动规模占比/);
+  assert.doesNotMatch(trackedHtml, /id="project-main-chart"/);
+  assert.doesNotMatch(trackedHtml, /id="branch-main-chart"/);
+  assert.match(trackedHtml, /chart-row/);
   assert.match(script, /window\.__MINIMAL_TRACKER_EXPORT__/);
   assert.match(script, /"totalLoc":10/);
   assert.match(echarts, /window\.echarts/);
+  assert.match(css, /\.panel-stack/);
+  assert.match(css, /grid-template-columns:2fr 1fr/);
 
   await fs.rm(dir, { recursive: true, force: true });
 });

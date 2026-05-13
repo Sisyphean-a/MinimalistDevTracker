@@ -46,11 +46,21 @@ function buildInclusiveDateRange(startDateKey, endDateKey) {
 function buildDayRecord(byDate, dateKey) {
   const source = byDate[dateKey] ?? {};
   const totalActiveTimeMs = source.totalActiveTimeMs ?? 0;
+  const trackedLocAdded = source.trackedLocAdded ?? 0;
+  const trackedLocDeleted = source.trackedLocDeleted ?? 0;
+  const untrackedLocAdded = source.untrackedLocAdded ?? 0;
+  const untrackedLocDeleted = source.untrackedLocDeleted ?? 0;
   const totalLocAdded = source.totalLocAdded ?? 0;
   const totalLocDeleted = source.totalLocDeleted ?? 0;
   return {
     date: dateKey,
     totalActiveTimeMs,
+    trackedLocAdded,
+    trackedLocDeleted,
+    trackedTotalLoc: trackedLocAdded + trackedLocDeleted,
+    untrackedLocAdded,
+    untrackedLocDeleted,
+    untrackedTotalLoc: untrackedLocAdded + untrackedLocDeleted,
     totalLocAdded,
     totalLocDeleted,
     totalLoc: totalLocAdded + totalLocDeleted
@@ -60,6 +70,10 @@ function buildDayRecord(byDate, dateKey) {
 function mergeDayTotals(acc, day) {
   return {
     totalActiveTimeMs: acc.totalActiveTimeMs + day.totalActiveTimeMs,
+    trackedLocAdded: acc.trackedLocAdded + (day.trackedLocAdded ?? 0),
+    trackedLocDeleted: acc.trackedLocDeleted + (day.trackedLocDeleted ?? 0),
+    untrackedLocAdded: acc.untrackedLocAdded + (day.untrackedLocAdded ?? 0),
+    untrackedLocDeleted: acc.untrackedLocDeleted + (day.untrackedLocDeleted ?? 0),
     totalLocAdded: acc.totalLocAdded + day.totalLocAdded,
     totalLocDeleted: acc.totalLocDeleted + day.totalLocDeleted
   };
@@ -109,6 +123,10 @@ function buildTrendWindow(byDate, endDateKey, days) {
   const dayRecords = currentDates.map((dateKey) => buildDayRecord(byDate, dateKey));
   const totals = dayRecords.reduce(mergeDayTotals, {
     totalActiveTimeMs: 0,
+    trackedLocAdded: 0,
+    trackedLocDeleted: 0,
+    untrackedLocAdded: 0,
+    untrackedLocDeleted: 0,
     totalLocAdded: 0,
     totalLocDeleted: 0
   });
@@ -118,6 +136,8 @@ function buildTrendWindow(byDate, endDateKey, days) {
     days: dayRecords,
     totals: {
       ...totals,
+      totalTrackedLoc: totals.trackedLocAdded + totals.trackedLocDeleted,
+      totalUntrackedLoc: totals.untrackedLocAdded + totals.untrackedLocDeleted,
       totalLoc: totals.totalLocAdded + totals.totalLocDeleted
     },
     fileTypeChanges: computeFileTypeChanges(currentFileTypes, previousFileTypes)

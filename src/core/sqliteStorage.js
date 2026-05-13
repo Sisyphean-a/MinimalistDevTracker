@@ -165,6 +165,12 @@ function appendRowToDayMap(dayMap, row) {
   dayMap.set(row.date_key, {
     date: row.date_key,
     totalActiveTimeMs: day.totalActiveTimeMs + row.duration_ms,
+    trackedLocAdded: day.trackedLocAdded + row.tracked_loc_added,
+    trackedLocDeleted: day.trackedLocDeleted + row.tracked_loc_deleted,
+    trackedTotalLoc: day.trackedTotalLoc + row.tracked_loc_added + row.tracked_loc_deleted,
+    untrackedLocAdded: day.untrackedLocAdded + row.untracked_loc_added,
+    untrackedLocDeleted: day.untrackedLocDeleted + row.untracked_loc_deleted,
+    untrackedTotalLoc: day.untrackedTotalLoc + row.untracked_loc_added + row.untracked_loc_deleted,
     totalLocAdded: day.totalLocAdded + row.total_loc_added,
     totalLocDeleted: day.totalLocDeleted + row.total_loc_deleted,
     totalLoc: day.totalLoc + row.total_loc_added + row.total_loc_deleted

@@ -8,7 +8,7 @@ test/**
 **/*.log
 node_modules/**/*.map
 node_modules/sql.js/dist/*debug*
-node_modules/sql.js/dist/*asm*
+node_modules/sql.js/dist/sql-asm*
 node_modules/sql.js/dist/worker.*
 node_modules/sql.js/dist/sql-wasm-browser*
 改造设计重构文档.md

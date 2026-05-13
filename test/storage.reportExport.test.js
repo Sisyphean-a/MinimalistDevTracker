@@ -98,3 +98,41 @@ test('readReportData supports explicit date range and branch filters', async () 
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('readReportData keeps tracked and untracked totals on each exported day', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-report-day-splits-'));
+  const storage = createStorage(dir, {
+    now: () => Date.parse('2026-04-09T10:00:00.000Z')
+  });
+
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    branch: 'main',
+    startTime: Date.parse('2026-04-02T01:00:00.000Z'),
+    endTime: Date.parse('2026-04-02T02:00:00.000Z'),
+    durationMs: 1_000,
+    trackedLocAdded: 3,
+    trackedLocDeleted: 1,
+    untrackedLocAdded: 2,
+    untrackedLocDeleted: 0,
+    locAdded: 5,
+    locDeleted: 1
+  });
+
+  const report = await storage.readReportData({
+    startDate: '2026-04-01',
+    endDate: '2026-04-03',
+    repoPaths: ['f:/repo/main']
+  });
+
+  assert.equal(report.days[1].date, '2026-04-02');
+  assert.equal(report.days[1].trackedLocAdded, 3);
+  assert.equal(report.days[1].trackedLocDeleted, 1);
+  assert.equal(report.days[1].untrackedLocAdded, 2);
+  assert.equal(report.days[1].untrackedLocDeleted, 0);
+  assert.equal(report.days[1].totalLocAdded, 5);
+  assert.equal(report.days[1].totalLocDeleted, 1);
+  assert.equal(report.days[1].totalLoc, 6);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});

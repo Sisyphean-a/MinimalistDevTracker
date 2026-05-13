@@ -22,6 +22,7 @@ test('.vscodeignore excludes large dependency artifacts that are not needed at r
   assert.match(ignoreFile, /\.codexpotter\/\*\*/);
   assert.match(ignoreFile, /node_modules\/\*\*\/\*\.map/);
   assert.match(ignoreFile, /node_modules\/sql\.js\/dist\/\*debug\*/);
-  assert.match(ignoreFile, /node_modules\/sql\.js\/dist\/\*asm\*/);
+  assert.match(ignoreFile, /node_modules\/sql\.js\/dist\/sql-asm\*/);
   assert.match(ignoreFile, /node_modules\/sql\.js\/dist\/worker\.\*/);
+  assert.doesNotMatch(ignoreFile, /node_modules\/sql\.js\/dist\/\*asm\*/);
 });
