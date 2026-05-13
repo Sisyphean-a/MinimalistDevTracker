@@ -195,7 +195,7 @@ function buildOfflineHtml(payload) {
     'const branchList = Array.isArray(payload.branches) ? payload.branches : [];',
     'const hasEcharts = typeof window.echarts === "object" && window.echarts;',
     'function safeChart(id){ const el = document.getElementById(id); return hasEcharts && el ? window.echarts.init(el) : null; }',
-    'function totalLoc(item){ return (item.totalLoc ?? ((item.totalLocAdded ?? item.totalLocAdded) + (item.totalLocDeleted ?? item.totalLocDeleted))) || 0; }',
+    'function totalLoc(item){ return (item.totalLoc ?? ((item.totalLocAdded || 0) + (item.totalLocDeleted || 0))) || 0; }',
     'function hourBuckets(){',
     '  const buckets = Array.from({ length: 24 }, function(_, hour){ return { label: String(hour).padStart(2, "0") + ":00", value: 0 }; });',
     '  sessions.forEach(function(session){',
@@ -291,7 +291,6 @@ async function loadDefaultEchartsSource() {
 
 function createReportExporter(options = {}) {
   const mkdir = options.mkdir ?? fs.mkdir;
-  const readFile = options.readFile ?? fs.readFile;
   const writeFile = options.writeFile ?? fs.writeFile;
 
   async function writeHtmlBundle(outputDir, payload, format) {
@@ -302,8 +301,6 @@ function createReportExporter(options = {}) {
     await writeFile(path.join(assetsDir, REPORT_STYLES_FILE_NAME), buildOfflineStyles(), 'utf8');
     await writeFile(path.join(outputDir, REPORT_DATA_FILE_NAME), buildReportDataScript(payload), 'utf8');
     await writeFile(path.join(outputDir, HTML_FILE_NAME), buildOfflineHtml(payload), 'utf8');
-    const dataFilePath = path.join(outputDir, buildDataFileName(format));
-    await writeFile(dataFilePath, serializeExportPayload(payload, format), 'utf8');
   }
 
   async function exportToDirectory(input) {
@@ -327,8 +324,7 @@ function createReportExporter(options = {}) {
       buildDataFileName,
       buildOfflineHtml,
       buildReadme,
-      buildReportDataScript,
-      readFile
+      buildReportDataScript
     }
   });
 }

@@ -1,3 +1,99 @@
+const { addDaysToDateKey } = require('../core/sqliteStoragePeriods');
+
+const VALID_PERIOD_TYPES = new Set([
+  'rolling30',
+  'month',
+  'rolling90',
+  'rolling180',
+  'rolling365',
+  'all'
+]);
+
+function normalizePeriodType(periodType) {
+  return VALID_PERIOD_TYPES.has(periodType) ? periodType : 'rolling30';
+}
+
+function resolveCurrentProjectRepoPath(repoPaths) {
+  return Array.isArray(repoPaths) && repoPaths.length > 0 ? repoPaths[0] : null;
+}
+
+function collectBranchOptions(projects, repoPath, currentBranch) {
+  const branchSet = new Set();
+
+  Object.values(projects ?? {}).forEach((project) => {
+    if (project?.repoPath === repoPath && project.branch) {
+      branchSet.add(project.branch);
+    }
+  });
+  if (currentBranch) {
+    branchSet.add(currentBranch);
+  }
+
+  return [...branchSet].sort((left, right) => left.localeCompare(right));
+}
+
+function buildExportDefaults(data, repoPaths, currentBranch) {
+  const currentProjectRepoPath = resolveCurrentProjectRepoPath(repoPaths);
+  const endDate = data.dateRangeEnd ?? data.date ?? '';
+  const startDate = endDate ? addDaysToDateKey(endDate, -29) : '';
+
+  return {
+    exportType: 'dataWithHtml',
+    format: 'json',
+    scopeType: 'currentProject',
+    branchMode: currentBranch ? 'current' : 'all',
+    currentProjectRepoPath,
+    currentBranch,
+    branchOptions: collectBranchOptions(data.projects, currentProjectRepoPath, currentBranch),
+    startDate,
+    endDate
+  };
+}
+
+async function resolveCurrentBranch(options, repoPaths) {
+  const repoPath = resolveCurrentProjectRepoPath(repoPaths);
+  if (!repoPath || typeof options.getCurrentBranchName !== 'function') {
+    return null;
+  }
+  return Promise.resolve(options.getCurrentBranchName(repoPath));
+}
+
+function normalizeExportRequest(message, repoPaths, currentBranch) {
+  const scopeType = message?.scopeType === 'all' ? 'all' : 'currentProject';
+  const exportType = message?.exportType === 'dataOnly' ? 'dataOnly' : 'dataWithHtml';
+  const format = message?.format === 'yaml' ? 'yaml' : 'json';
+  const currentProjectRepoPath = resolveCurrentProjectRepoPath(repoPaths);
+  const selectedRepoPaths = scopeType === 'currentProject' && currentProjectRepoPath
+    ? [currentProjectRepoPath]
+    : repoPaths;
+  let branchMode = scopeType === 'currentProject' ? (message?.branchMode ?? 'current') : 'all';
+  let branch = null;
+
+  if (scopeType !== 'currentProject') {
+    branchMode = 'all';
+  } else if (branchMode === 'current') {
+    branch = currentBranch ?? null;
+    if (!branch) {
+      branchMode = 'all';
+    }
+  } else if (branchMode === 'named') {
+    branch = typeof message?.branchName === 'string' && message.branchName ? message.branchName : null;
+  } else {
+    branchMode = 'all';
+  }
+
+  return {
+    exportType,
+    format,
+    scopeType,
+    repoPaths: selectedRepoPaths,
+    branchMode,
+    branch,
+    startDate: message?.startDate ?? null,
+    endDate: message?.endDate ?? null
+  };
+}
+
 function createReportPanelController(options) {
   const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
   const setIntervalFn = options.setIntervalFn ?? setInterval;
@@ -31,13 +127,17 @@ function createReportPanelController(options) {
         handlePanelDisposed();
       }),
       panelInstance.webview.onDidReceiveMessage((message) => {
-        if (message?.type !== 'refresh-report') {
+        if (message?.type === 'refresh-report') {
+          if (typeof message.periodType === 'string') {
+            selectedPeriodType = normalizePeriodType(message.periodType);
+          }
+          Promise.resolve(refreshReport({ shouldFlush: true })).catch((error) => options.logError('refreshReport', error));
           return;
         }
-        if (typeof message.periodType === 'string') {
-          selectedPeriodType = message.periodType === 'month' ? 'month' : 'rolling30';
+        if (message?.type !== 'export-report' || typeof options.exportReport !== 'function') {
+          return;
         }
-        Promise.resolve(refreshReport({ shouldFlush: true })).catch((error) => options.logError('refreshReport', error));
+        Promise.resolve(handleExportRequest(message)).catch((error) => options.logError('exportReport', error));
       })
     ];
   }
@@ -49,13 +149,26 @@ function createReportPanelController(options) {
     if (input.shouldFlush && options.shouldFlushBeforeReport()) {
       await options.tracker.flushAll();
     }
+    const repoPaths = options.getReportRepoPaths();
     const data = await options.storage.readReportData({
       periodType: selectedPeriodType,
-      repoPaths: options.getReportRepoPaths()
+      repoPaths
     });
+    const currentBranch = await resolveCurrentBranch(options, repoPaths);
     panel.webview.html = options.renderDailyReportHtml(data, {
-      refreshIntervalMs: options.refreshIntervalMs
+      refreshIntervalMs: options.refreshIntervalMs,
+      exportDefaults: buildExportDefaults(data, repoPaths, currentBranch)
     });
+  }
+
+  async function handleExportRequest(message) {
+    if (options.shouldFlushBeforeReport()) {
+      await options.tracker.flushAll();
+    }
+    const repoPaths = options.getReportRepoPaths();
+    const currentBranch = await resolveCurrentBranch(options, repoPaths);
+    const request = normalizeExportRequest(message, repoPaths, currentBranch);
+    await options.exportReport(request);
   }
 
   function ensurePanel() {

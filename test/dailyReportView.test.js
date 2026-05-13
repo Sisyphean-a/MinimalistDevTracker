@@ -159,3 +159,40 @@ test('renderDailyReportHtml handles empty data', () => {
   const html = renderDailyReportHtml(null);
   assert.match(html, /暂无统计数据/);
 });
+
+test('renderDailyReportHtml renders extended period options and export defaults', () => {
+  const html = renderDailyReportHtml({
+    periodType: 'rolling90',
+    periodLabel: '最近3个月',
+    dateRangeStart: '2026-02-12',
+    dateRangeEnd: '2026-05-13',
+    exportDefaults: {
+      exportType: 'dataWithHtml',
+      format: 'json',
+      scopeType: 'currentProject',
+      branchMode: 'current',
+      currentBranch: 'main',
+      branchOptions: ['main', 'feature/a'],
+      startDate: '2026-04-14',
+      endDate: '2026-05-13'
+    },
+    projects: {
+      'f:/repo/main||main': createProject()
+    },
+    days: [
+      { date: '2026-05-13', totalActiveTimeMs: 3_600_000, totalLocAdded: 8, totalLocDeleted: 2, totalLoc: 10 }
+    ]
+  });
+
+  assert.match(html, /最近3个月/);
+  assert.match(html, /最近半年/);
+  assert.match(html, /最近1年/);
+  assert.match(html, /全部/);
+  assert.match(html, /导出/);
+  assert.match(html, /数据 \+ 可视化 HTML \+ 说明文档/);
+  assert.match(html, /option value="json" selected/);
+  assert.match(html, /option value="currentProject" selected/);
+  assert.match(html, /option value="current" selected/);
+  assert.match(html, /value="2026-04-14"/);
+  assert.match(html, /value="2026-05-13"/);
+});

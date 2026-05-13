@@ -1,8 +1,5 @@
 const RECENT_SESSION_LIMIT = 20;
-const REPORT_PERIOD_OPTIONS = [
-  { value: 'rolling30', label: '最近30天' },
-  { value: 'month', label: '本月' }
-];
+const LONG_RANGE_DAY_THRESHOLD = 60;
 const HEATLINE_COLORS = ['#edf3f1', '#d4e8df', '#8ecdb6', '#2fa17f', '#0f7b62'];
 const {
   aggregateByFileType,
@@ -13,6 +10,11 @@ const {
   sortSessionsByEndTime,
   toProjectList
 } = require('./reportViewModel');
+const {
+  createClientScript,
+  renderExportPanel,
+  renderPeriodSelector
+} = require('./reportControlsView');
 const { REPORT_PAGE_STYLES } = require('./reportStyles');
 
 function escapeHtml(value) {
@@ -112,19 +114,6 @@ function renderFileTypeRows(fileTypeStats) {
     .join('');
 }
 
-function renderPeriodSelector(periodType) {
-  const options = REPORT_PERIOD_OPTIONS.map((option) => {
-    const selected = option.value === periodType ? ' selected' : '';
-    return `<option value="${escapeHtml(option.value)}"${selected}>${escapeHtml(option.label)}</option>`;
-  }).join('');
-  return [
-    '<label class="range-picker">',
-    '<span>时间范围</span>',
-    `<select id="range-select">${options}</select>`,
-    '</label>'
-  ].join('');
-}
-
 function getHeatlineColor(ratio) {
   if (ratio <= 0) {
     return HEATLINE_COLORS[0];
@@ -143,20 +132,33 @@ function renderHeatlineCells(buckets) {
     .join('');
 }
 
-function renderHeatLineSection(sessions, dateRangeStart, dateRangeEnd) {
-  const buckets = buildHourlyBuckets(sessions, dateRangeStart, dateRangeEnd);
+function renderHeatlineDayCells(days) {
+  const maxDurationMs = days.reduce((maxValue, day) => Math.max(maxValue, day.totalActiveTimeMs ?? 0), 0);
+  return days
+    .map((day) => {
+      const ratio = maxDurationMs === 0 ? 0 : (day.totalActiveTimeMs ?? 0) / maxDurationMs;
+      return `<span class="heatline-cell" style="background:${escapeHtml(getHeatlineColor(ratio))}"></span>`;
+    })
+    .join('');
+}
+
+function renderHeatLineSection(sessions, days, dateRangeStart, dateRangeEnd) {
+  const useDayBuckets = Array.isArray(days) && days.length > LONG_RANGE_DAY_THRESHOLD;
+  const buckets = useDayBuckets ? days : buildHourlyBuckets(sessions, dateRangeStart, dateRangeEnd);
   if (buckets.length === 0) {
     return '';
   }
+  const caption = useDayBuckets ? '按天切分，颜色越深表示活跃越高' : '按小时切分，颜色越深表示活跃越高';
+  const cells = useDayBuckets ? renderHeatlineDayCells(days) : renderHeatlineCells(buckets);
 
   return [
     '<section class="panel"><h3>整体热力线</h3>',
-    '<p class="muted">按小时切分，颜色越深表示活跃越高</p>',
+    `<p class="muted">${caption}</p>`,
     '<div class="heatline-labels">',
     `<span>${escapeHtml(dateRangeStart ?? '')}</span>`,
     `<span>${escapeHtml(dateRangeEnd ?? '')}</span>`,
     '</div>',
-    `<div class="heatline-track"><div class="heatline-grid" style="grid-template-columns:repeat(${escapeHtml(buckets.length)}, minmax(0, 1fr));">${renderHeatlineCells(buckets)}</div></div>`,
+    `<div class="heatline-track"><div class="heatline-grid" style="grid-template-columns:repeat(${escapeHtml(buckets.length)}, minmax(0, 1fr));">${cells}</div></div>`,
     '</section>'
   ].join('');
 }
@@ -206,20 +208,6 @@ function renderSessionRows(sessions) {
   }).join('');
 }
 
-function createRefreshScript() {
-  return [
-    '<script>',
-    '(function(){',
-    'const vscode = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;',
-    'const btn = document.getElementById("refresh-btn");',
-    'const select = document.getElementById("range-select");',
-    'if (btn && vscode) { btn.addEventListener("click", function(){ vscode.postMessage({ type: "refresh-report" }); }); }',
-    'if (select && vscode) { select.addEventListener("change", function(){ vscode.postMessage({ type: "refresh-report", periodType: select.value }); }); }',
-    '})();',
-    '</script>'
-  ].join('');
-}
-
 function renderEmptyHtml() {
   return '<html><body><h2>Minimalist Dev Tracker</h2><p>暂无统计数据</p></body></html>';
 }
@@ -234,7 +222,7 @@ function buildReportSections(dailyData) {
   return {
     activeDaysSection: renderActiveDaysSection(dailyData.days),
     fileTypeRows: renderFileTypeRows(aggregateByFileType(projects)),
-    heatLineSection: renderHeatLineSection(sessions, dailyData.dateRangeStart, dailyData.dateRangeEnd),
+    heatLineSection: renderHeatLineSection(sessions, dailyData.days, dailyData.dateRangeStart, dailyData.dateRangeEnd),
     projectRows: renderProjectRows(projects),
     sessionRows: renderSessionRows(sortSessionsByEndTime(sessions).slice(0, RECENT_SESSION_LIMIT)),
     summary: aggregateSummary(projects)
@@ -244,6 +232,7 @@ function buildReportSections(dailyData) {
 function renderReportHtml(dailyData, options, sections) {
   const refreshIntervalMs = options.refreshIntervalMs ?? 30_000;
   const periodType = dailyData.periodType ?? 'rolling30';
+  const exportDefaults = options.exportDefaults ?? dailyData.exportDefaults ?? {};
   const rangeLabel = dailyData.dateRangeStart && dailyData.dateRangeEnd
     ? `${escapeHtml(dailyData.dateRangeStart)} ~ ${escapeHtml(dailyData.dateRangeEnd)}`
     : '';
@@ -253,9 +242,10 @@ function renderReportHtml(dailyData, options, sections) {
     '<body>',
     '<div class="header">',
     `<div><h2 class="title">Minimalist Dev Tracker</h2><div class="muted">${escapeHtml(dailyData.periodLabel ?? periodType)}${rangeLabel ? ` · ${rangeLabel}` : ''}</div></div>`,
-    `<div style="display:flex;align-items:center;gap:10px;">${renderPeriodSelector(periodType)}<button id="refresh-btn" class="btn">立即刷新</button></div>`,
+    `<div class="toolbar-actions">${renderPeriodSelector(periodType)}<button id="export-toggle-btn" class="btn btn-secondary">导出</button><button id="refresh-btn" class="btn">立即刷新</button></div>`,
     '</div>',
     `<p class="muted">自动刷新间隔：${escapeHtml(Math.floor(refreshIntervalMs / 1000))} 秒</p>`,
+    renderExportPanel(exportDefaults),
     renderSummaryCards(sections.summary),
     renderUntrackedExplanation(),
     sections.heatLineSection,
@@ -269,7 +259,7 @@ function renderReportHtml(dailyData, options, sections) {
     '<section class="panel"><h3>最近会话</h3>',
     '<table><thead><tr><th>仓库</th><th>分支</th><th>开始</th><th>结束</th><th>时长</th><th>已跟踪变更</th><th>未纳入 Git 的文件</th><th>总变更行</th></tr></thead>',
     `<tbody>${sections.sessionRows || '<tr><td colspan="8">暂无会话数据</td></tr>'}</tbody></table></section>`,
-    createRefreshScript(),
+    createClientScript(),
     '</body>',
     '</html>'
   ].join('');

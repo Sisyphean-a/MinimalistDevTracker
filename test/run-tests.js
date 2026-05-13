@@ -18,6 +18,7 @@ require('./gitDiffProvider.test');
 require('./storage.test');
 require('./storage.reportExport.test');
 require('./reportExporter.test');
+require('./exportRunner.test');
 require('./dailyReportView.test');
 require('./reportViewModel.test');
 require('./reportScope.test');

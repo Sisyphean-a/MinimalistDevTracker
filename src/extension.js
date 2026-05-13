@@ -19,6 +19,8 @@ const { migrateLegacyStorageData } = require('./core/storageMigration');
 const { registerExtensionCommands } = require('./core/extensionCommands');
 const { openDatabase } = require('./core/sqliteDatabase');
 const { createTrackerConfigReader } = require('./core/trackerConfig');
+const { createReportExporter } = require('./core/reportExporter');
+const { createExportReportRunner } = require('./core/exportRunner');
 const { createReportPanelController } = require('./ui/reportPanelController');
 const { listWorkspaceFolderPaths, resolveWorkspaceAllowedPaths } = require('./core/workspaceTracking');
 const { renderDailyReportHtml } = require('./ui/dailyReportView');
@@ -173,13 +175,45 @@ async function createStorageRuntime(context, config) {
   };
 }
 
-function createReportController(context, config, tracker, storage, getCurrentPathRegistry) {
+function createFolderSelector(windowApi) {
+  return async function selectFolder() {
+    const uris = await windowApi.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: '选择导出目录'
+    });
+    return uris?.[0]?.fsPath ?? null;
+  };
+}
+
+function createReportController(context, config, tracker, storage, gitDiffProvider, getCurrentPathRegistry) {
+  const reportExporter = createReportExporter();
+  const selectFolder = createFolderSelector(vscode.window);
+  const exportReport = createExportReportRunner({
+    now: () => Date.now(),
+    selectFolder,
+    storage,
+    reportExporter,
+    showInfoMessage: (message) => vscode.window.showInformationMessage(message),
+    showWarningMessage: (message) => vscode.window.showWarningMessage(message)
+  });
+
   return createReportPanelController({
     vscode,
     context,
     reportViewType: REPORT_VIEW_TYPE,
     tracker,
     storage,
+    exportReport,
+    getCurrentBranchName: async (repoPath) => {
+      try {
+        return await gitDiffProvider.getCurrentBranch(repoPath);
+      } catch (error) {
+        reportRuntimeError('getCurrentBranch', error);
+        return null;
+      }
+    },
     shouldFlushBeforeReport: config.shouldFlushBeforeReport,
     getReportRepoPaths: () => resolveReportRepoPaths(vscode.workspace.workspaceFolders, getCurrentPathRegistry()),
     renderDailyReportHtml,
@@ -228,7 +262,7 @@ async function activate(context) {
   const storageRuntime = await createStorageRuntime(context, config);
   const gitDiffProvider = createGitDiffProvider(vscode, { gitClient, normalizer });
   const tracker = createTracker(storageRuntime.storage, gitDiffProvider);
-  const reportPanelController = createReportController(context, config, tracker, storageRuntime.storage, () => currentPathRegistry);
+  const reportPanelController = createReportController(context, config, tracker, storageRuntime.storage, gitDiffProvider, () => currentPathRegistry);
   const { runtimeTracker, fileActivityWatcher } = createRuntimeTracking(config, tracker, gitDiffProvider, pathRegistry, normalizer);
 
   registerExtensionCommands({

@@ -10,6 +10,9 @@ A privacy-first VS Code extension that tracks local coding activity by repositor
 - Stores runtime data in a local SQLite database under the resolved storage root
 - Automatically migrates existing legacy JSON session files into SQLite
 - Opens a built-in daily report webview
+- Supports report ranges for `最近30天` / `本月` / `最近3个月` / `最近半年` / `最近1年` / `全部`
+- Exports filtered report data as `JSON` or `YAML`
+- Can generate an offline export folder with raw data, HTML charts, and a README analysis guide
 
 ## Configuration
 
