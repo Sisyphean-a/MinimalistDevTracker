@@ -19,6 +19,16 @@ function hasProjects(reportData) {
   return reportData?.projects && Object.keys(reportData.projects).length > 0;
 }
 
+function isCurrentProjectBranchFiltered(input, reportRequest) {
+  if (input?.scopeType !== 'currentProject') {
+    return false;
+  }
+  if (!reportRequest?.branch) {
+    return false;
+  }
+  return input.branchMode === 'current' || input.branchMode === 'named';
+}
+
 function createExportReportRunner(options) {
   const now = options.now ?? (() => Date.now());
 
@@ -37,7 +47,18 @@ function createExportReportRunner(options) {
     if (Array.isArray(input.projectBranches)) {
       reportRequest.projectBranches = input.projectBranches;
     }
-    const reportData = await options.storage.readReportData(reportRequest);
+    let reportData = await options.storage.readReportData(reportRequest);
+    if (!hasProjects(reportData) && isCurrentProjectBranchFiltered(input, reportRequest)) {
+      const fallbackReportData = await options.storage.readReportData({
+        ...reportRequest,
+        branch: null
+      });
+      if (hasProjects(fallbackReportData)) {
+        await options.showWarningMessage('当前分支在所选日期范围内没有可导出的数据，请改为“全部分支”或调整日期范围。');
+        return null;
+      }
+      reportData = fallbackReportData;
+    }
     if (!hasProjects(reportData)) {
       await options.showWarningMessage('当前筛选条件下没有可导出的数据。');
       return null;

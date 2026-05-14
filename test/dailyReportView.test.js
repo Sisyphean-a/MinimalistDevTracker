@@ -194,8 +194,10 @@ test('renderDailyReportHtml renders extended period options and export defaults'
   assert.match(html, /option value="json" selected/);
   assert.match(html, /option value="currentProject" selected/);
   assert.match(html, /option value="custom"/);
-  assert.match(html, /export-custom-project-branch-select/);
-  assert.match(html, /f:\/repo\/main \/ main/);
+  assert.match(html, /自定义项目 \+ 分支/);
+  assert.match(html, /分支（可多选）/);
+  assert.match(html, /project-branch-row/);
+  assert.match(html, /f:\/repo\/main/);
   assert.match(html, /option value="current" selected/);
   assert.match(html, /value="2026-04-14"/);
   assert.match(html, /value="2026-05-13"/);

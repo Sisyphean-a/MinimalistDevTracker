@@ -69,20 +69,71 @@ function encodeProjectBranchValue(repoPath, branch) {
   return JSON.stringify({ repoPath, branch });
 }
 
-function renderCustomProjectBranchOptions(defaults) {
-  return defaults.projectBranchOptions.map((item) => {
+function groupProjectBranches(options) {
+  const output = new Map();
+
+  options.forEach((item) => {
     const repoPath = item?.repoPath ?? '';
     const branch = item?.branch ?? 'unknown';
-    const label = `${repoPath} / ${branch}`;
-    const value = encodeProjectBranchValue(repoPath, branch);
-    return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+    if (!repoPath) {
+      return;
+    }
+    const branchSet = output.get(repoPath) ?? new Set();
+    branchSet.add(branch);
+    output.set(repoPath, branchSet);
+  });
+
+  return [...output.entries()]
+    .map(([repoPath, branchSet]) => {
+      return {
+        repoPath,
+        branches: [...branchSet].sort((left, right) => left.localeCompare(right))
+      };
+    })
+    .sort((left, right) => left.repoPath.localeCompare(right.repoPath));
+}
+
+function renderProjectBranchMatrix(defaults) {
+  const rows = groupProjectBranches(defaults.projectBranchOptions);
+  if (rows.length === 0) {
+    return '<div class="muted">当前时间范围没有可选项目分支。</div>';
+  }
+
+  const rowMarkup = rows.map((item, rowIndex) => {
+    const branchMarkup = item.branches.map((branch, branchIndex) => {
+      const value = encodeProjectBranchValue(item.repoPath, branch);
+      const id = `export-custom-branch-${rowIndex}-${branchIndex}`;
+      return [
+        `<label class="project-branch-branch" for="${escapeHtml(id)}">`,
+        `<input id="${escapeHtml(id)}" class="export-custom-branch-item" type="checkbox" value="${escapeHtml(value)}" checked>`,
+        `<span>${escapeHtml(branch)}</span>`,
+        '</label>'
+      ].join('');
+    }).join('');
+
+    return [
+      `<div class="project-branch-row" data-repo-path="${escapeHtml(item.repoPath)}">`,
+      '<div class="project-branch-repo">',
+      `<input id="export-custom-project-${escapeHtml(String(rowIndex))}" class="export-custom-project-enabled" type="checkbox" checked>`,
+      `<label for="export-custom-project-${escapeHtml(String(rowIndex))}" class="project-branch-repo-label">${escapeHtml(item.repoPath)}</label>`,
+      '</div>',
+      `<div class="project-branch-branches">${branchMarkup}</div>`,
+      '</div>'
+    ].join('');
   }).join('');
+
+  return [
+    '<div class="project-branch-matrix-head">',
+    '<span>项目</span>',
+    '<span>分支（可多选）</span>',
+    '</div>',
+    `<div class="project-branch-matrix-body">${rowMarkup}</div>`
+  ].join('');
 }
 
 function renderExportPanel(input) {
   const defaults = resolveExportDefaults(input);
   const branchDisabled = defaults.scopeType === 'currentProject' ? '' : ' disabled';
-  const customDisabled = defaults.scopeType === 'custom' ? '' : ' disabled';
   const customHiddenClass = defaults.scopeType === 'custom' ? '' : ' hidden';
 
   return [
@@ -93,7 +144,7 @@ function renderExportPanel(input) {
     `<label><span>导出格式</span><select id="export-format-select"><option value="json"${defaults.format === 'json' ? ' selected' : ''}>JSON</option><option value="yaml"${defaults.format === 'yaml' ? ' selected' : ''}>YAML</option></select></label>`,
     `<label><span>导出目标</span><select id="export-scope-select"><option value="currentProject"${defaults.scopeType === 'currentProject' ? ' selected' : ''}>当前项目</option><option value="custom"${defaults.scopeType === 'custom' ? ' selected' : ''}>自定义（多选）</option><option value="all"${defaults.scopeType === 'all' ? ' selected' : ''}>全部</option></select></label>`,
     `<label><span>导出分支</span><select id="export-branch-select"${branchDisabled}>${renderBranchOptions(defaults)}</select></label>`,
-    `<label id="export-custom-project-branch-wrap" class="${customHiddenClass}"><span>自定义项目 + 分支（可多选）</span><select id="export-custom-project-branch-select" multiple size="8"${customDisabled}>${renderCustomProjectBranchOptions(defaults)}</select></label>`,
+    `<section id="export-custom-project-branch-wrap" class="project-branch-matrix ${customHiddenClass}"><h4>自定义项目 + 分支</h4>${renderProjectBranchMatrix(defaults)}</section>`,
     `<label><span>开始日期</span><input id="export-start-date" type="date" value="${escapeHtml(defaults.startDate)}"></label>`,
     `<label><span>结束日期</span><input id="export-end-date" type="date" value="${escapeHtml(defaults.endDate)}"></label>`,
     '</div>',
@@ -117,12 +168,12 @@ function createClientScript() {
     'const exportScopeSelect = document.getElementById("export-scope-select");',
     'const exportBranchSelect = document.getElementById("export-branch-select");',
     'const exportCustomProjectBranchWrap = document.getElementById("export-custom-project-branch-wrap");',
-    'const exportCustomProjectBranchSelect = document.getElementById("export-custom-project-branch-select");',
     'const exportStartDate = document.getElementById("export-start-date");',
     'const exportEndDate = document.getElementById("export-end-date");',
     'const exportSubmitBtn = document.getElementById("export-submit-btn");',
     'const exportError = document.getElementById("export-error");',
     'function setExportError(message){ if (exportError) { exportError.textContent = message || ""; } }',
+    'function getCustomRows(){ return Array.from(document.querySelectorAll(".project-branch-row")); }',
     'function syncExportScopeState(){',
     '  if (!exportScopeSelect) { return; }',
     '  const scopeType = exportScopeSelect.value;',
@@ -131,15 +182,38 @@ function createClientScript() {
     '    if (scopeType === "custom") { exportCustomProjectBranchWrap.classList.remove("hidden"); }',
     '    else { exportCustomProjectBranchWrap.classList.add("hidden"); }',
     '  }',
-    '  if (exportCustomProjectBranchSelect) { exportCustomProjectBranchSelect.disabled = scopeType !== "custom"; }',
-    '  if (scopeType === "custom" && exportCustomProjectBranchSelect && exportCustomProjectBranchSelect.selectedOptions.length === 0) {',
-    '    Array.from(exportCustomProjectBranchSelect.options || []).forEach(function(option){ option.selected = true; });',
+    '  getCustomRows().forEach(function(row){',
+    '    const repoToggle = row.querySelector(".export-custom-project-enabled");',
+    '    const branchItems = Array.from(row.querySelectorAll(".export-custom-branch-item"));',
+    '    const enabled = scopeType === "custom" && (!repoToggle || repoToggle.checked);',
+    '    branchItems.forEach(function(item){ item.disabled = !enabled; });',
+    '  });',
+    '}',
+    'function syncCustomRowState(row){',
+    '  const repoToggle = row.querySelector(".export-custom-project-enabled");',
+    '  const branchItems = Array.from(row.querySelectorAll(".export-custom-branch-item"));',
+    '  const scopeType = exportScopeSelect ? exportScopeSelect.value : "currentProject";',
+    '  const enabled = scopeType === "custom" && (!repoToggle || repoToggle.checked);',
+    '  branchItems.forEach(function(item){ item.disabled = !enabled; });',
+    '  if (enabled && branchItems.filter(function(item){ return item.checked; }).length === 0 && branchItems.length > 0) {',
+    '    branchItems[0].checked = true;',
     '  }',
     '}',
     'if (refreshBtn && vscode) { refreshBtn.addEventListener("click", function(){ vscode.postMessage({ type: "refresh-report" }); }); }',
     'if (rangeSelect && vscode) { rangeSelect.addEventListener("change", function(){ vscode.postMessage({ type: "refresh-report", periodType: rangeSelect.value }); }); }',
     'if (exportToggleBtn && exportPanel) { exportToggleBtn.addEventListener("click", function(){ exportPanel.classList.toggle("hidden"); }); }',
     'if (exportScopeSelect) { exportScopeSelect.addEventListener("change", syncExportScopeState); syncExportScopeState(); }',
+    'getCustomRows().forEach(function(row){',
+    '  const repoToggle = row.querySelector(".export-custom-project-enabled");',
+    '  if (repoToggle) { repoToggle.addEventListener("change", function(){ syncCustomRowState(row); }); }',
+    '  Array.from(row.querySelectorAll(".export-custom-branch-item")).forEach(function(item){',
+    '    item.addEventListener("change", function(){',
+    '      const checkedItems = Array.from(row.querySelectorAll(".export-custom-branch-item")).filter(function(branchItem){ return branchItem.checked; });',
+    '      if (checkedItems.length === 0) { item.checked = true; }',
+    '    });',
+    '  });',
+    '  syncCustomRowState(row);',
+    '});',
     'if (exportSubmitBtn && vscode) { exportSubmitBtn.addEventListener("click", function(){',
     '  setExportError("");',
     '  if (!exportStartDate || !exportEndDate || !exportStartDate.value || !exportEndDate.value) { setExportError("请选择完整的导出日期范围。"); return; }',
@@ -154,14 +228,17 @@ function createClientScript() {
     '    else if (rawBranchValue.indexOf("named:") === 0) { branchMode = "named"; branchName = rawBranchValue.slice(6); }',
     '  } else if (scopeType === "custom") {',
     '    branchMode = "custom";',
-    '    if (!exportCustomProjectBranchSelect) { setExportError("自定义项目分支选择器不可用。"); return; }',
-    '    projectBranches = Array.from(exportCustomProjectBranchSelect.selectedOptions || []).map(function(option){',
-    '      try {',
-    '        const parsed = JSON.parse(option.value);',
-    '        return { repoPath: parsed && typeof parsed.repoPath === "string" ? parsed.repoPath : "", branch: parsed && typeof parsed.branch === "string" ? parsed.branch : "unknown" };',
-    '      } catch (_error) {',
-    '        return null;',
-    '      }',
+    '    projectBranches = getCustomRows().flatMap(function(row){',
+    '      const repoToggle = row.querySelector(".export-custom-project-enabled");',
+    '      if (repoToggle && !repoToggle.checked) { return []; }',
+    '      return Array.from(row.querySelectorAll(".export-custom-branch-item:checked")).map(function(item){',
+    '        try {',
+    '          const parsed = JSON.parse(item.value);',
+    '          return { repoPath: parsed && typeof parsed.repoPath === "string" ? parsed.repoPath : "", branch: parsed && typeof parsed.branch === "string" ? parsed.branch : "unknown" };',
+    '        } catch (_error) {',
+    '          return null;',
+    '        }',
+    '      });',
     '    }).filter(function(item){ return item && item.repoPath; });',
     '    if (projectBranches.length === 0) { setExportError("请至少选择一个项目 + 分支组合。"); return; }',
     '  }',

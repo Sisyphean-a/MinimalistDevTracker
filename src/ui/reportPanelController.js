@@ -59,7 +59,9 @@ function collectBranchOptions(projects, repoPath, currentBranch) {
   return [...branchSet].sort((left, right) => left.localeCompare(right));
 }
 
-function buildExportDefaults(data, repoPaths, currentBranch) {
+function buildExportDefaults(viewData, optionsData, repoPaths, currentBranch) {
+  const data = viewData ?? {};
+  const sourceData = optionsData ?? data;
   const currentProjectRepoPath = resolveCurrentProjectRepoPath(repoPaths);
   const endDate = data.dateRangeEnd ?? data.date ?? '';
   const startDate = endDate ? addDaysToDateKey(endDate, -29) : '';
@@ -72,7 +74,7 @@ function buildExportDefaults(data, repoPaths, currentBranch) {
     currentProjectRepoPath,
     currentBranch,
     branchOptions: collectBranchOptions(data.projects, currentProjectRepoPath, currentBranch),
-    projectBranchOptions: collectProjectBranchOptions(data.projects),
+    projectBranchOptions: collectProjectBranchOptions(sourceData.projects),
     startDate,
     endDate
   };
@@ -215,10 +217,18 @@ function createReportPanelController(options) {
       periodType: selectedPeriodType,
       repoPaths
     });
+    let exportOptionsData = data;
+    if (typeof options.getExportDefaultsData === 'function') {
+      exportOptionsData = await Promise.resolve(options.getExportDefaultsData({
+        periodType: selectedPeriodType,
+        repoPaths,
+        viewData: data
+      }));
+    }
     const currentBranch = await resolveCurrentBranch(options, repoPaths);
     panel.webview.html = options.renderDailyReportHtml(data, {
       refreshIntervalMs: options.refreshIntervalMs,
-      exportDefaults: buildExportDefaults(data, repoPaths, currentBranch)
+      exportDefaults: buildExportDefaults(data, exportOptionsData, repoPaths, currentBranch)
     });
   }
 

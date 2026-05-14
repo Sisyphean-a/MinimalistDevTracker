@@ -169,3 +169,62 @@ test('export runner builds payload and delegates to report exporter with a times
   assert.match(infoMessages[0], /导出完成/);
   assert.equal(result.outputDir, requests[1].outputDir);
 });
+
+test('export runner warns with branch-specific hint when current branch has no data but project range has data', async () => {
+  const warnings = [];
+  const requests = [];
+  const runner = createExportReportRunner({
+    selectFolder: async () => 'C:/exports',
+    storage: {
+      readReportData: async (input) => {
+        requests.push(input);
+        if (input.branch === 'feature/no-data') {
+          return {
+            dateRangeStart: '2026-04-14',
+            dateRangeEnd: '2026-05-13',
+            projects: {},
+            days: []
+          };
+        }
+        return createReportData();
+      }
+    },
+    reportExporter: {
+      exportToDirectory: async () => {
+        throw new Error('should not write');
+      }
+    },
+    showInfoMessage: async () => {},
+    showWarningMessage: async (message) => {
+      warnings.push(message);
+    }
+  });
+
+  const result = await runner({
+    exportType: 'dataWithHtml',
+    format: 'json',
+    scopeType: 'currentProject',
+    repoPaths: ['f:/repo/main'],
+    branchMode: 'current',
+    branch: 'feature/no-data',
+    startDate: '2026-04-14',
+    endDate: '2026-05-13'
+  });
+
+  assert.equal(result, null);
+  assert.deepEqual(requests, [
+    {
+      repoPaths: ['f:/repo/main'],
+      branch: 'feature/no-data',
+      startDate: '2026-04-14',
+      endDate: '2026-05-13'
+    },
+    {
+      repoPaths: ['f:/repo/main'],
+      branch: null,
+      startDate: '2026-04-14',
+      endDate: '2026-05-13'
+    }
+  ]);
+  assert.match(warnings[0], /当前分支在所选日期范围内没有可导出的数据/);
+});

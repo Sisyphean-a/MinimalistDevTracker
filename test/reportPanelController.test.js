@@ -434,3 +434,49 @@ test('report panel controller normalizes custom project-branch selections for ex
     endDate: '2026-05-13'
   });
 });
+
+test('report panel controller can populate export custom options from global dataset', async () => {
+  const panel = createMockPanel();
+  let lastRenderOptions = null;
+  const controller = createReportPanelController({
+    vscode: createMockVscode(panel),
+    context: { subscriptions: [] },
+    reportViewType: 'minimalTracker.dailyReport',
+    tracker: { flushAll: async () => {} },
+    storage: {
+      readReportData: async () => ({
+        periodType: 'rolling30',
+        periodLabel: '最近30天',
+        dateRangeStart: '2026-04-14',
+        dateRangeEnd: '2026-05-13',
+        projects: { 'f:/repo/main||main': { repoPath: 'f:/repo/main', branch: 'main', totalLocAdded: 1, totalLocDeleted: 0, sessions: [] } },
+        days: []
+      })
+    },
+    getExportDefaultsData: async () => ({
+      projects: {
+        'f:/repo/main||main': { repoPath: 'f:/repo/main', branch: 'main' },
+        'f:/repo/other||feature/x': { repoPath: 'f:/repo/other', branch: 'feature/x' }
+      }
+    }),
+    getReportRepoPaths: () => ['f:/repo/main'],
+    renderDailyReportHtml: (_data, viewOptions) => {
+      lastRenderOptions = viewOptions;
+      return '<html></html>';
+    },
+    shouldFlushBeforeReport: () => false,
+    refreshIntervalMs: 30_000,
+    logError: (label, error) => {
+      throw new Error(`${label}:${error.message}`);
+    },
+    setIntervalFn: () => 'timer',
+    clearIntervalFn: () => {}
+  });
+
+  await controller.open();
+
+  assert.deepEqual(lastRenderOptions.exportDefaults.projectBranchOptions, [
+    { repoPath: 'f:/repo/main', branch: 'main' },
+    { repoPath: 'f:/repo/other', branch: 'feature/x' }
+  ]);
+});

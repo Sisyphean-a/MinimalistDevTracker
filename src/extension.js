@@ -218,6 +218,9 @@ function createReportController(context, config, tracker, storage, gitDiffProvid
     },
     shouldFlushBeforeReport: config.shouldFlushBeforeReport,
     getReportRepoPaths: () => resolveReportRepoPaths(vscode.workspace.workspaceFolders, getCurrentPathRegistry()),
+    getExportDefaultsData: ({ periodType }) => {
+      return storage.readReportData({ periodType });
+    },
     renderDailyReportHtml,
     refreshIntervalMs: REFRESH_INTERVAL_MS,
     logError: reportRuntimeError
