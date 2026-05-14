@@ -17,6 +17,33 @@ function resolveCurrentProjectRepoPath(repoPaths) {
   return Array.isArray(repoPaths) && repoPaths.length > 0 ? repoPaths[0] : null;
 }
 
+function collectProjectBranchOptions(projects) {
+  const seen = new Set();
+  const options = [];
+
+  Object.entries(projects ?? {}).forEach(([projectKey, project]) => {
+    const repoPath = project?.repoPath ?? String(projectKey).split('||')[0] ?? '';
+    const branch = project?.branch ?? String(projectKey).split('||')[1] ?? 'unknown';
+    if (!repoPath) {
+      return;
+    }
+    const key = `${repoPath}||${branch}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    options.push({ repoPath, branch });
+  });
+
+  return options.sort((left, right) => {
+    const repoCompare = left.repoPath.localeCompare(right.repoPath);
+    if (repoCompare !== 0) {
+      return repoCompare;
+    }
+    return left.branch.localeCompare(right.branch);
+  });
+}
+
 function collectBranchOptions(projects, repoPath, currentBranch) {
   const branchSet = new Set();
 
@@ -45,6 +72,7 @@ function buildExportDefaults(data, repoPaths, currentBranch) {
     currentProjectRepoPath,
     currentBranch,
     branchOptions: collectBranchOptions(data.projects, currentProjectRepoPath, currentBranch),
+    projectBranchOptions: collectProjectBranchOptions(data.projects),
     startDate,
     endDate
   };
@@ -58,19 +86,51 @@ async function resolveCurrentBranch(options, repoPaths) {
   return Promise.resolve(options.getCurrentBranchName(repoPath));
 }
 
+function normalizeCustomProjectBranches(rawProjectBranches) {
+  if (!Array.isArray(rawProjectBranches)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const output = [];
+  rawProjectBranches.forEach((item) => {
+    const repoPath = typeof item?.repoPath === 'string' ? item.repoPath.trim() : '';
+    const branch = typeof item?.branch === 'string' && item.branch.trim() ? item.branch.trim() : 'unknown';
+    if (!repoPath) {
+      return;
+    }
+    const key = `${repoPath}||${branch}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    output.push({ repoPath, branch });
+  });
+  return output;
+}
+
 function normalizeExportRequest(message, repoPaths, currentBranch) {
-  const scopeType = message?.scopeType === 'all' ? 'all' : 'currentProject';
+  const scopeType = message?.scopeType === 'all'
+    ? 'all'
+    : (message?.scopeType === 'custom' ? 'custom' : 'currentProject');
   const exportType = message?.exportType === 'dataOnly' ? 'dataOnly' : 'dataWithHtml';
   const format = message?.format === 'yaml' ? 'yaml' : 'json';
   const currentProjectRepoPath = resolveCurrentProjectRepoPath(repoPaths);
+  const customProjectBranches = scopeType === 'custom'
+    ? normalizeCustomProjectBranches(message?.projectBranches)
+    : [];
   const selectedRepoPaths = scopeType === 'currentProject' && currentProjectRepoPath
     ? [currentProjectRepoPath]
-    : repoPaths;
-  let branchMode = scopeType === 'currentProject' ? (message?.branchMode ?? 'current') : 'all';
+    : (scopeType === 'custom'
+      ? [...new Set(customProjectBranches.map((item) => item.repoPath))]
+      : null);
+  let branchMode = scopeType === 'currentProject' ? (message?.branchMode ?? 'current') : (scopeType === 'custom' ? 'custom' : 'all');
   let branch = null;
 
-  if (scopeType !== 'currentProject') {
+  if (scopeType === 'all') {
     branchMode = 'all';
+  } else if (scopeType === 'custom') {
+    branchMode = 'custom';
   } else if (branchMode === 'current') {
     branch = currentBranch ?? null;
     if (!branch) {
@@ -89,6 +149,7 @@ function normalizeExportRequest(message, repoPaths, currentBranch) {
     repoPaths: selectedRepoPaths,
     branchMode,
     branch,
+    projectBranches: customProjectBranches,
     startDate: message?.startDate ?? null,
     endDate: message?.endDate ?? null
   };

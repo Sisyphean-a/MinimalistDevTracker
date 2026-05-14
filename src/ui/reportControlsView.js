@@ -25,6 +25,7 @@ function resolveExportDefaults(input = {}) {
     branchName: input.branchName ?? null,
     currentBranch: input.currentBranch ?? null,
     branchOptions: Array.isArray(input.branchOptions) ? input.branchOptions : [],
+    projectBranchOptions: Array.isArray(input.projectBranchOptions) ? input.projectBranchOptions : [],
     startDate: input.startDate ?? '',
     endDate: input.endDate ?? ''
   };
@@ -64,9 +65,25 @@ function renderBranchOptions(defaults) {
   return options.join('');
 }
 
+function encodeProjectBranchValue(repoPath, branch) {
+  return JSON.stringify({ repoPath, branch });
+}
+
+function renderCustomProjectBranchOptions(defaults) {
+  return defaults.projectBranchOptions.map((item) => {
+    const repoPath = item?.repoPath ?? '';
+    const branch = item?.branch ?? 'unknown';
+    const label = `${repoPath} / ${branch}`;
+    const value = encodeProjectBranchValue(repoPath, branch);
+    return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+  }).join('');
+}
+
 function renderExportPanel(input) {
   const defaults = resolveExportDefaults(input);
   const branchDisabled = defaults.scopeType === 'currentProject' ? '' : ' disabled';
+  const customDisabled = defaults.scopeType === 'custom' ? '' : ' disabled';
+  const customHiddenClass = defaults.scopeType === 'custom' ? '' : ' hidden';
 
   return [
     '<section id="export-panel" class="panel export-panel hidden">',
@@ -74,8 +91,9 @@ function renderExportPanel(input) {
     '<div class="export-grid">',
     `<label><span>导出类型</span><select id="export-type-select"><option value="dataOnly"${defaults.exportType === 'dataOnly' ? ' selected' : ''}>纯数据</option><option value="dataWithHtml"${defaults.exportType === 'dataWithHtml' ? ' selected' : ''}>数据 + 可视化 HTML + 说明文档</option></select></label>`,
     `<label><span>导出格式</span><select id="export-format-select"><option value="json"${defaults.format === 'json' ? ' selected' : ''}>JSON</option><option value="yaml"${defaults.format === 'yaml' ? ' selected' : ''}>YAML</option></select></label>`,
-    `<label><span>导出目标</span><select id="export-scope-select"><option value="currentProject"${defaults.scopeType === 'currentProject' ? ' selected' : ''}>当前项目</option><option value="all"${defaults.scopeType === 'all' ? ' selected' : ''}>全部</option></select></label>`,
+    `<label><span>导出目标</span><select id="export-scope-select"><option value="currentProject"${defaults.scopeType === 'currentProject' ? ' selected' : ''}>当前项目</option><option value="custom"${defaults.scopeType === 'custom' ? ' selected' : ''}>自定义（多选）</option><option value="all"${defaults.scopeType === 'all' ? ' selected' : ''}>全部</option></select></label>`,
     `<label><span>导出分支</span><select id="export-branch-select"${branchDisabled}>${renderBranchOptions(defaults)}</select></label>`,
+    `<label id="export-custom-project-branch-wrap" class="${customHiddenClass}"><span>自定义项目 + 分支（可多选）</span><select id="export-custom-project-branch-select" multiple size="8"${customDisabled}>${renderCustomProjectBranchOptions(defaults)}</select></label>`,
     `<label><span>开始日期</span><input id="export-start-date" type="date" value="${escapeHtml(defaults.startDate)}"></label>`,
     `<label><span>结束日期</span><input id="export-end-date" type="date" value="${escapeHtml(defaults.endDate)}"></label>`,
     '</div>',
@@ -98,34 +116,63 @@ function createClientScript() {
     'const exportFormatSelect = document.getElementById("export-format-select");',
     'const exportScopeSelect = document.getElementById("export-scope-select");',
     'const exportBranchSelect = document.getElementById("export-branch-select");',
+    'const exportCustomProjectBranchWrap = document.getElementById("export-custom-project-branch-wrap");',
+    'const exportCustomProjectBranchSelect = document.getElementById("export-custom-project-branch-select");',
     'const exportStartDate = document.getElementById("export-start-date");',
     'const exportEndDate = document.getElementById("export-end-date");',
     'const exportSubmitBtn = document.getElementById("export-submit-btn");',
     'const exportError = document.getElementById("export-error");',
     'function setExportError(message){ if (exportError) { exportError.textContent = message || ""; } }',
-    'function syncBranchState(){ if (exportScopeSelect && exportBranchSelect) { exportBranchSelect.disabled = exportScopeSelect.value !== "currentProject"; } }',
+    'function syncExportScopeState(){',
+    '  if (!exportScopeSelect) { return; }',
+    '  const scopeType = exportScopeSelect.value;',
+    '  if (exportBranchSelect) { exportBranchSelect.disabled = scopeType !== "currentProject"; }',
+    '  if (exportCustomProjectBranchWrap) {',
+    '    if (scopeType === "custom") { exportCustomProjectBranchWrap.classList.remove("hidden"); }',
+    '    else { exportCustomProjectBranchWrap.classList.add("hidden"); }',
+    '  }',
+    '  if (exportCustomProjectBranchSelect) { exportCustomProjectBranchSelect.disabled = scopeType !== "custom"; }',
+    '  if (scopeType === "custom" && exportCustomProjectBranchSelect && exportCustomProjectBranchSelect.selectedOptions.length === 0) {',
+    '    Array.from(exportCustomProjectBranchSelect.options || []).forEach(function(option){ option.selected = true; });',
+    '  }',
+    '}',
     'if (refreshBtn && vscode) { refreshBtn.addEventListener("click", function(){ vscode.postMessage({ type: "refresh-report" }); }); }',
     'if (rangeSelect && vscode) { rangeSelect.addEventListener("change", function(){ vscode.postMessage({ type: "refresh-report", periodType: rangeSelect.value }); }); }',
     'if (exportToggleBtn && exportPanel) { exportToggleBtn.addEventListener("click", function(){ exportPanel.classList.toggle("hidden"); }); }',
-    'if (exportScopeSelect) { exportScopeSelect.addEventListener("change", syncBranchState); syncBranchState(); }',
+    'if (exportScopeSelect) { exportScopeSelect.addEventListener("change", syncExportScopeState); syncExportScopeState(); }',
     'if (exportSubmitBtn && vscode) { exportSubmitBtn.addEventListener("click", function(){',
     '  setExportError("");',
     '  if (!exportStartDate || !exportEndDate || !exportStartDate.value || !exportEndDate.value) { setExportError("请选择完整的导出日期范围。"); return; }',
     '  if (exportStartDate.value > exportEndDate.value) { setExportError("开始日期不能晚于结束日期。"); return; }',
+    '  const scopeType = exportScopeSelect ? exportScopeSelect.value : "currentProject";',
     '  let branchMode = "all";',
     '  let branchName = null;',
-    '  if (exportScopeSelect && exportScopeSelect.value === "currentProject" && exportBranchSelect) {',
+    '  let projectBranches = [];',
+    '  if (scopeType === "currentProject" && exportBranchSelect) {',
     '    const rawBranchValue = exportBranchSelect.value;',
     '    if (rawBranchValue === "current" || rawBranchValue === "all") { branchMode = rawBranchValue; }',
     '    else if (rawBranchValue.indexOf("named:") === 0) { branchMode = "named"; branchName = rawBranchValue.slice(6); }',
+    '  } else if (scopeType === "custom") {',
+    '    branchMode = "custom";',
+    '    if (!exportCustomProjectBranchSelect) { setExportError("自定义项目分支选择器不可用。"); return; }',
+    '    projectBranches = Array.from(exportCustomProjectBranchSelect.selectedOptions || []).map(function(option){',
+    '      try {',
+    '        const parsed = JSON.parse(option.value);',
+    '        return { repoPath: parsed && typeof parsed.repoPath === "string" ? parsed.repoPath : "", branch: parsed && typeof parsed.branch === "string" ? parsed.branch : "unknown" };',
+    '      } catch (_error) {',
+    '        return null;',
+    '      }',
+    '    }).filter(function(item){ return item && item.repoPath; });',
+    '    if (projectBranches.length === 0) { setExportError("请至少选择一个项目 + 分支组合。"); return; }',
     '  }',
     '  vscode.postMessage({',
     '    type: "export-report",',
     '    exportType: exportTypeSelect ? exportTypeSelect.value : "dataWithHtml",',
     '    format: exportFormatSelect ? exportFormatSelect.value : "json",',
-    '    scopeType: exportScopeSelect ? exportScopeSelect.value : "currentProject",',
+    '    scopeType: scopeType,',
     '    branchMode: branchMode,',
     '    branchName: branchName,',
+    '    projectBranches: projectBranches,',
     '    startDate: exportStartDate.value,',
     '    endDate: exportEndDate.value',
     '  });',

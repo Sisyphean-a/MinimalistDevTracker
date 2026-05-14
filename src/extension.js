@@ -177,11 +177,13 @@ async function createStorageRuntime(context, config) {
 
 function createFolderSelector(windowApi) {
   return async function selectFolder() {
+    const defaultDownloadsDir = path.join(os.homedir(), 'Downloads');
     const uris = await windowApi.showOpenDialog({
       canSelectFiles: false,
       canSelectFolders: true,
       canSelectMany: false,
-      openLabel: '选择导出目录'
+      openLabel: '选择导出目录',
+      defaultUri: vscode.Uri.file(defaultDownloadsDir)
     });
     return uris?.[0]?.fsPath ?? null;
   };

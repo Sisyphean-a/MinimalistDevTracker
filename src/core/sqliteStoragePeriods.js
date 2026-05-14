@@ -172,7 +172,8 @@ function normalizeReportRequest(input) {
     repoPaths: input?.repoPaths ?? null,
     startDate: input?.startDate ?? null,
     endDate: input?.endDate ?? null,
-    branch: input?.branch ?? null
+    branch: input?.branch ?? null,
+    projectBranches: input?.projectBranches ?? null
   };
 }
 

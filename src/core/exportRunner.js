@@ -28,12 +28,16 @@ function createExportReportRunner(options) {
       return null;
     }
 
-    const reportData = await options.storage.readReportData({
+    const reportRequest = {
       repoPaths: input.repoPaths,
       branch: input.branch,
       startDate: input.startDate,
       endDate: input.endDate
-    });
+    };
+    if (Array.isArray(input.projectBranches)) {
+      reportRequest.projectBranches = input.projectBranches;
+    }
+    const reportData = await options.storage.readReportData(reportRequest);
     if (!hasProjects(reportData)) {
       await options.showWarningMessage('当前筛选条件下没有可导出的数据。');
       return null;

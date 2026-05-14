@@ -136,3 +136,54 @@ test('readReportData keeps tracked and untracked totals on each exported day', a
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('readReportData filters by custom project-branch pairs without cross-branch contamination', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-storage-report-custom-project-branch-'));
+  const storage = createStorage(dir, {
+    now: () => Date.parse('2026-04-09T10:00:00.000Z')
+  });
+
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    branch: 'main',
+    startTime: Date.parse('2026-04-02T01:00:00.000Z'),
+    endTime: Date.parse('2026-04-02T02:00:00.000Z'),
+    durationMs: 1_000,
+    locAdded: 3,
+    locDeleted: 1
+  });
+  await storage.appendSession({
+    repoPath: 'f:/repo/main',
+    branch: 'feature/a',
+    startTime: Date.parse('2026-04-03T01:00:00.000Z'),
+    endTime: Date.parse('2026-04-03T02:00:00.000Z'),
+    durationMs: 1_000,
+    locAdded: 4,
+    locDeleted: 1
+  });
+  await storage.appendSession({
+    repoPath: 'f:/repo/other',
+    branch: 'main',
+    startTime: Date.parse('2026-04-04T01:00:00.000Z'),
+    endTime: Date.parse('2026-04-04T02:00:00.000Z'),
+    durationMs: 1_000,
+    locAdded: 5,
+    locDeleted: 1
+  });
+
+  const report = await storage.readReportData({
+    startDate: '2026-04-01',
+    endDate: '2026-04-05',
+    projectBranches: [
+      { repoPath: 'f:/repo/main', branch: 'main' },
+      { repoPath: 'f:/repo/other', branch: 'main' }
+    ]
+  });
+
+  const projectKeys = Object.keys(report.projects).sort();
+  assert.deepEqual(projectKeys, ['f:/repo/main||main', 'f:/repo/other||main']);
+  assert.equal(report.totalLocAdded, 8);
+  assert.equal(report.totalLocDeleted, 2);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});

@@ -25,6 +25,7 @@ const REPORT_PAGE_STYLES = [
   '.export-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:10px;}',
   '.export-grid label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);}',
   '.export-grid select,.export-grid input{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 10px;color:var(--text);font:inherit;}',
+  '#export-custom-project-branch-select{min-height:200px;}',
   '.export-grid select:disabled,.export-grid input:disabled{background:#edf3f1;color:#89a099;}',
   '.export-error{min-height:16px;margin-bottom:8px;}',
   '.heatline-labels{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);margin-bottom:10px;}',

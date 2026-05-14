@@ -305,6 +305,131 @@ test('report panel controller forwards export requests with normalized current-b
     repoPaths: ['f:/repo/main'],
     branchMode: 'current',
     branch: 'main',
+    projectBranches: [],
+    startDate: '2026-04-14',
+    endDate: '2026-05-13'
+  });
+});
+
+test('report panel controller exports all projects without workspace repo-path filter', async () => {
+  const panel = createMockPanel();
+  const exports = [];
+  const controller = createReportPanelController({
+    vscode: createMockVscode(panel),
+    context: { subscriptions: [] },
+    reportViewType: 'minimalTracker.dailyReport',
+    tracker: { flushAll: async () => {} },
+    storage: {
+      readReportData: async () => ({
+        periodType: 'rolling30',
+        periodLabel: '最近30天',
+        dateRangeStart: '2026-04-14',
+        dateRangeEnd: '2026-05-13',
+        projects: { 'f:/repo/main||main': { repoPath: 'f:/repo/main', branch: 'main', totalLocAdded: 1, totalLocDeleted: 0, sessions: [] } },
+        days: []
+      })
+    },
+    getReportRepoPaths: () => ['f:/repo/main'],
+    getCurrentBranchName: () => 'main',
+    exportReport: async (input) => {
+      exports.push(input);
+    },
+    shouldFlushBeforeReport: () => false,
+    renderDailyReportHtml: () => '<html></html>',
+    refreshIntervalMs: 30_000,
+    logError: (label, error) => {
+      throw new Error(`${label}:${error.message}`);
+    },
+    setIntervalFn: () => 'timer',
+    clearIntervalFn: () => {}
+  });
+
+  await controller.open();
+  panel.emitMessage({
+    type: 'export-report',
+    exportType: 'dataWithHtml',
+    format: 'json',
+    scopeType: 'all',
+    startDate: '2026-04-14',
+    endDate: '2026-05-13'
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(exports[0], {
+    exportType: 'dataWithHtml',
+    format: 'json',
+    scopeType: 'all',
+    repoPaths: null,
+    branchMode: 'all',
+    branch: null,
+    projectBranches: [],
+    startDate: '2026-04-14',
+    endDate: '2026-05-13'
+  });
+});
+
+test('report panel controller normalizes custom project-branch selections for export', async () => {
+  const panel = createMockPanel();
+  const exports = [];
+  const controller = createReportPanelController({
+    vscode: createMockVscode(panel),
+    context: { subscriptions: [] },
+    reportViewType: 'minimalTracker.dailyReport',
+    tracker: { flushAll: async () => {} },
+    storage: {
+      readReportData: async () => ({
+        periodType: 'rolling30',
+        periodLabel: '最近30天',
+        dateRangeStart: '2026-04-14',
+        dateRangeEnd: '2026-05-13',
+        projects: {
+          'f:/repo/main||main': { repoPath: 'f:/repo/main', branch: 'main', totalLocAdded: 1, totalLocDeleted: 0, sessions: [] },
+          'f:/repo/other||feature/a': { repoPath: 'f:/repo/other', branch: 'feature/a', totalLocAdded: 1, totalLocDeleted: 0, sessions: [] }
+        },
+        days: []
+      })
+    },
+    getReportRepoPaths: () => ['f:/repo/main'],
+    exportReport: async (input) => {
+      exports.push(input);
+    },
+    shouldFlushBeforeReport: () => false,
+    renderDailyReportHtml: () => '<html></html>',
+    refreshIntervalMs: 30_000,
+    logError: (label, error) => {
+      throw new Error(`${label}:${error.message}`);
+    },
+    setIntervalFn: () => 'timer',
+    clearIntervalFn: () => {}
+  });
+
+  await controller.open();
+  panel.emitMessage({
+    type: 'export-report',
+    exportType: 'dataWithHtml',
+    format: 'json',
+    scopeType: 'custom',
+    projectBranches: [
+      { repoPath: 'f:/repo/main', branch: 'main' },
+      { repoPath: 'f:/repo/other', branch: 'feature/a' },
+      { repoPath: 'f:/repo/main', branch: 'main' }
+    ],
+    startDate: '2026-04-14',
+    endDate: '2026-05-13'
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(exports[0], {
+    exportType: 'dataWithHtml',
+    format: 'json',
+    scopeType: 'custom',
+    repoPaths: ['f:/repo/main', 'f:/repo/other'],
+    branchMode: 'custom',
+    branch: null,
+    projectBranches: [
+      { repoPath: 'f:/repo/main', branch: 'main' },
+      { repoPath: 'f:/repo/other', branch: 'feature/a' }
+    ],
     startDate: '2026-04-14',
     endDate: '2026-05-13'
   });

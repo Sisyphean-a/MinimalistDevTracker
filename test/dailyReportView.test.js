@@ -173,6 +173,7 @@ test('renderDailyReportHtml renders extended period options and export defaults'
       branchMode: 'current',
       currentBranch: 'main',
       branchOptions: ['main', 'feature/a'],
+      projectBranchOptions: [{ repoPath: 'f:/repo/main', branch: 'main' }],
       startDate: '2026-04-14',
       endDate: '2026-05-13'
     },
@@ -192,6 +193,9 @@ test('renderDailyReportHtml renders extended period options and export defaults'
   assert.match(html, /数据 \+ 可视化 HTML \+ 说明文档/);
   assert.match(html, /option value="json" selected/);
   assert.match(html, /option value="currentProject" selected/);
+  assert.match(html, /option value="custom"/);
+  assert.match(html, /export-custom-project-branch-select/);
+  assert.match(html, /f:\/repo\/main \/ main/);
   assert.match(html, /option value="current" selected/);
   assert.match(html, /value="2026-04-14"/);
   assert.match(html, /value="2026-05-13"/);
