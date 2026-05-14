@@ -100,7 +100,7 @@ function buildOfflineStyles() {
     '.panel{padding:16px;}',
     '.panel h2{margin:0 0 10px 0;font-size:21px;line-height:1.2;}',
     '.chart-single{height:420px;}',
-    '.chart-row{display:grid;grid-template-columns:2fr 1fr;gap:12px;align-items:stretch;}',
+    '.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:stretch;}',
     '.chart-main,.chart-pie{height:420px;}',
     '.table-wrap{overflow:auto;}',
     'table{width:100%;border-collapse:collapse;}',
@@ -119,16 +119,26 @@ function buildOfflineStyles() {
 
 function buildSummaryCards(payload, mode) {
   const summary = payload.summary ?? {};
-  const primaryLabel = mode === 'tracked' ? 'Git 已跟踪总变更' : '包含未跟踪文件的总变更';
-  const primaryValue = mode === 'tracked' ? (summary.totalTrackedLoc ?? 0) : (summary.totalLoc ?? 0);
-  return [
+  const cards = [
     { label: '总活跃时长', value: formatDuration(summary.totalActiveTimeMs ?? 0) },
-    { label: '会话数', value: String(summary.sessionCount ?? 0) },
-    { label: primaryLabel, value: String(primaryValue) },
-    { label: 'Git 已跟踪总变更', value: String(summary.totalTrackedLoc ?? 0) },
-    { label: '未跟踪文件总变更', value: String(summary.totalUntrackedLoc ?? 0) },
-    { label: '活跃日期数', value: String(summary.activeDayCount ?? 0) }
-  ].map((item) => {
+    { label: '会话数', value: String(summary.sessionCount ?? 0) }
+  ];
+  if (mode === 'tracked') {
+    cards.push(
+      { label: 'Git 已跟踪总变更', value: String(summary.totalTrackedLoc ?? 0) },
+      { label: '包含未跟踪文件的总变更', value: String(summary.totalLoc ?? 0) },
+      { label: '未跟踪文件总变更', value: String(summary.totalUntrackedLoc ?? 0) }
+    );
+  } else {
+    cards.push(
+      { label: '包含未跟踪文件的总变更', value: String(summary.totalLoc ?? 0) },
+      { label: 'Git 已跟踪总变更', value: String(summary.totalTrackedLoc ?? 0) },
+      { label: '未跟踪文件总变更', value: String(summary.totalUntrackedLoc ?? 0) }
+    );
+  }
+  cards.push({ label: '活跃日期数', value: String(summary.activeDayCount ?? 0) });
+
+  return cards.map((item) => {
     return `<article class="card"><h2>${escapeHtml(item.label)}</h2><strong>${escapeHtml(item.value)}</strong></article>`;
   }).join('');
 }
@@ -188,7 +198,7 @@ function buildInlineScript(mode) {
     'function totalLoc(item){ return item && item.totalLoc != null ? item.totalLoc : sumLoc(item && item.totalLocAdded, item && item.totalLocDeleted); }',
     'function metricLoc(item){ return mode === "tracked" ? trackedLoc(item) : totalLoc(item); }',
     'function dayMetricLoc(day){ return mode === "tracked" ? (day.trackedTotalLoc != null ? day.trackedTotalLoc : sumLoc(day.trackedLocAdded, day.trackedLocDeleted)) : totalLoc(day); }',
-    'function toHours(ms){ return Number((ms || 0) / 3600000); }',
+    'function toHours(ms){ return Number(((ms || 0) / 3600000).toFixed(2)); }',
     'function formatDuration(ms){ const sec = Math.floor((ms || 0) / 1000); const h = Math.floor(sec / 3600); const m = Math.floor((sec % 3600) / 60); const s = sec % 60; return h + "小时" + m + "分" + s + "秒"; }',
     'function formatDateTime(ts){ if (!ts) return "-"; return new Date(ts).toLocaleString(); }',
     'function safeChart(id){ const el = document.getElementById(id); return hasEcharts && el ? window.echarts.init(el) : null; }',
@@ -256,27 +266,41 @@ function buildInlineScript(mode) {
     '    yAxis: { type: "value", axisLabel: unit === "hours" ? { formatter: function(v){ return Number(v || 0).toFixed(1); } } : axisLabel() },',
     '    series: [{ type: "bar", data: items.map(function(item){ return item.value; }), itemStyle: { color: "#0f7b62" } }]',
     '  });',
+    '  const pieData = toPieData(items);',
     '  mount(pieId, {',
+    '    legend: { type: "scroll", orient: "vertical", top: 10, right: 4, bottom: 10 },',
     '    tooltip: { trigger: "item", valueFormatter: function(v){ return unit === "hours" ? Number(v || 0).toFixed(2) + " 小时" : Number(v || 0).toLocaleString("zh-CN"); } },',
-    '    series: [{ type: "pie", radius: ["35%","72%"], data: toPieData(items), label: { formatter: "{b}\\n{d}%" } }]',
+    '    series: [{ type: "pie", radius: ["34%","62%"], center: ["34%","50%"], avoidLabelOverlap: true, label: { show: false }, labelLine: { show: false }, data: pieData }]',
     '  });',
     '}',
-    'function mountTreemapPie(mainId, pieId, items, valueField, unit){',
-    '  const normalized = items.map(function(item){ return { label: item.label, value: item[valueField] || 0 }; });',
-    '  mount(mainId, {',
-    '    tooltip: { formatter: function(params){ return params.name + ": " + (unit === "hours" ? Number(params.value || 0).toFixed(2) + " 小时" : Number(params.value || 0).toLocaleString("zh-CN")); } },',
-    '    series: [{ type: "treemap", breadcrumb: { show: false }, roam: false, label: { show: true, formatter: "{b}" }, data: normalized.map(function(item){ return { name: item.label, value: item.value }; }) }]',
-    '  });',
-    '  mount(pieId, {',
-    '    tooltip: { trigger: "item", valueFormatter: function(v){ return unit === "hours" ? Number(v || 0).toFixed(2) + " 小时" : Number(v || 0).toLocaleString("zh-CN"); } },',
-    '    series: [{ type: "pie", radius: ["35%","72%"], data: toPieData(normalized.map(function(item){ return { label: item.label, value: item.value }; })), label: { formatter: "{b}\\n{d}%" } }]',
-    '  });',
+    'function toMetricSeries(items, key){',
+    '  return items.map(function(item){ return { label: item.label, value: item[key] || 0 }; });',
+    '}',
+    'function mountSessionDistributionCharts(){',
+    '  const buckets = buildBuckets();',
+    '  mountBarPie("session-count-main-chart", "session-count-pie-chart", "单次代码改动行数分布（区间次数）", toMetricSeries(buckets, "count"), "loc");',
+    '  mountBarPie("session-loc-main-chart", "session-loc-pie-chart", "单次代码改动行数分布（区间总代码行数）", toMetricSeries(buckets, "loc"), "loc");',
+    '  mountBarPie("session-time-main-chart", "session-time-pie-chart", "单次代码改动行数分布（区间总花费时间）", toMetricSeries(buckets.map(function(item){ return { label: item.label, durationHours: toHours(item.durationMs) }; }), "durationHours"), "hours");',
     '}',
     'function mountDailyTrend(){',
     '  mount("daily-trend-chart", {',
-    '    tooltip: { trigger: "axis" }, legend: { top: 20 }, grid: baseGrid(),',
+    '    tooltip: {',
+    '      trigger: "axis",',
+    '      formatter: function(params){',
+    '        if (!Array.isArray(params) || params.length === 0) return "";',
+    '        const lines = [params[0].axisValueLabel || ""];',
+    '        params.forEach(function(item){',
+    '          const marker = item.marker || "";',
+    '          const value = item.seriesName === "活跃时长(小时)"',
+    '            ? Number(item.value || 0).toFixed(2) + " 小时"',
+    '            : Number(item.value || 0).toLocaleString("zh-CN");',
+    '          lines.push(marker + item.seriesName + " " + value);',
+    '        });',
+    '        return lines.join("<br/>");',
+    '      }',
+    '    }, legend: { top: 20 }, grid: baseGrid(),',
     '    xAxis: { type: "category", data: dayList.map(function(day){ return day.date; }) },',
-    '    yAxis: [{ type: "value", name: "行数", axisLabel: axisLabel() }, { type: "value", name: "活跃时长(小时)", axisLabel: { formatter: function(v){ return Number(v || 0).toFixed(1); } } }],',
+    '    yAxis: [{ type: "value", name: "行数", axisLabel: axisLabel() }, { type: "value", name: "活跃时长(小时)", axisLabel: { formatter: function(v){ return Number(v || 0).toFixed(2); } } }],',
     '    series: [',
     '      { name: metricName + "总变更", type: "bar", data: dayList.map(function(day){ return dayMetricLoc(day); }), itemStyle: { color: "#0f7b62" } },',
     '      { name: "活跃时长(小时)", type: "line", yAxisIndex: 1, smooth: true, data: dayList.map(function(day){ return toHours(day.totalActiveTimeMs); }), itemStyle: { color: "#466f95" } }',
@@ -292,14 +316,11 @@ function buildInlineScript(mode) {
     '  }',
     '}',
     'mountDailyTrend();',
-    'mountBarPie("hour-main-chart", "hour-pie-chart", "每日代码总时段区段分析", buildHourBuckets(), "hours");',
-    'const buckets = buildBuckets();',
-    'mountTreemapPie("session-count-main-chart", "session-count-pie-chart", buckets, "count", "loc");',
-    'mountTreemapPie("session-loc-main-chart", "session-loc-pie-chart", buckets, "loc", "loc");',
-    'mountTreemapPie("session-time-main-chart", "session-time-pie-chart", buckets.map(function(item){ return { label: item.label, durationHours: toHours(item.durationMs) }; }), "durationHours", "hours");',
+    'mountSessionDistributionCharts();',
     'mountProjectBranchCharts();',
     'mountBarPie("file-main-chart", "file-pie-chart", "文件类型分布", fileTypeList.map(function(item){ return { label: item.fileType || "-", value: mode === "tracked" ? sumLoc(item.trackedLocAdded, item.trackedLocDeleted) : sumLoc(item.locAdded, item.locDeleted) }; }), "loc");',
     'mountBarPie("weekday-main-chart", "weekday-pie-chart", "工作日分布", buildWeekdayBuckets(), "hours");',
+    'mountBarPie("hour-main-chart", "hour-pie-chart", "每日代码总时段区段分析", buildHourBuckets(), "hours");',
     'const tbody = document.getElementById("session-table-body");',
     'if (tbody) {',
     '  if (!sessions.length) {',
@@ -378,7 +399,6 @@ function buildOfflineHtml(payload, mode) {
     `<section class="cards">${buildSummaryCards(payload, mode)}</section>`,
     '<section class="panel-stack">',
     buildSingleChartPanel('daily-trend-chart', '每日代码行数变化趋势'),
-    buildDualChartPanel('hour-main-chart', 'hour-pie-chart', '每日代码总时段区段分析'),
     buildDualChartPanel('session-count-main-chart', 'session-count-pie-chart', '单次代码改动行数分布（区间次数）'),
     buildDualChartPanel('session-loc-main-chart', 'session-loc-pie-chart', '单次代码改动行数分布（区间总代码行数）'),
     buildDualChartPanel('session-time-main-chart', 'session-time-pie-chart', '单次代码改动行数分布（区间总花费时间）'),
@@ -386,6 +406,7 @@ function buildOfflineHtml(payload, mode) {
     branchPanel,
     buildDualChartPanel('file-main-chart', 'file-pie-chart', '文件类型分布'),
     buildDualChartPanel('weekday-main-chart', 'weekday-pie-chart', '工作日分布'),
+    buildDualChartPanel('hour-main-chart', 'hour-pie-chart', '每日代码总时段区段分析'),
     '</section>',
     buildSessionTableMarkup(mode),
     '</main>',

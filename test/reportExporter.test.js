@@ -209,18 +209,21 @@ test('report exporter writes offline html package with local assets and script p
   assert.match(html, /report-total\.html/);
   assert.match(trackedHtml, /纯 Git 跟踪口径/);
   assert.match(totalHtml, /包含未跟踪文件总量口径/);
+  assert.equal((trackedHtml.match(/<h2>Git 已跟踪总变更<\/h2>/g) ?? []).length, 1);
   assert.match(trackedHtml, /单次代码改动行数分布（区间次数）/);
   assert.match(trackedHtml, /单次代码改动行数分布（区间总代码行数）/);
   assert.match(trackedHtml, /单次代码改动行数分布（区间总花费时间）/);
   assert.doesNotMatch(trackedHtml, /单次改动规模占比/);
+  assert.doesNotMatch(trackedHtml, /treemap/);
   assert.doesNotMatch(trackedHtml, /id="project-main-chart"/);
   assert.doesNotMatch(trackedHtml, /id="branch-main-chart"/);
+  assert.ok(trackedHtml.indexOf('id="weekday-main-chart"') < trackedHtml.indexOf('id="hour-main-chart"'));
   assert.match(trackedHtml, /chart-row/);
   assert.match(script, /window\.__MINIMAL_TRACKER_EXPORT__/);
   assert.match(script, /"totalLoc":10/);
   assert.match(echarts, /window\.echarts/);
   assert.match(css, /\.panel-stack/);
-  assert.match(css, /grid-template-columns:2fr 1fr/);
+  assert.match(css, /grid-template-columns:1fr 1fr/);
 
   await fs.rm(dir, { recursive: true, force: true });
 });
